@@ -31,6 +31,12 @@ PHOTO_PROJECTIONS = (
     AttachmentProjection("其他照片", "其他照片"),
 )
 
+# The measured 3MF is also part of the current Preset state.  It is kept on
+# Submission as the historical source and is deliberately not duplicated in
+# PresetVersion.
+PRESET_3MF_PROJECTION = AttachmentProjection("preset 3mf", "preset 3mf")
+CURRENT_ATTACHMENT_PROJECTIONS = PHOTO_PROJECTIONS + (PRESET_3MF_PROJECTION,)
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,7 +47,7 @@ class ProjectionService:
         self,
         client: Any,
         *,
-        projections: tuple[AttachmentProjection, ...] = PHOTO_PROJECTIONS,
+        projections: tuple[AttachmentProjection, ...] = CURRENT_ATTACHMENT_PROJECTIONS,
         attachment_adapter: FeishuAttachmentAdapter | None = None,
     ) -> None:
         self.client = client

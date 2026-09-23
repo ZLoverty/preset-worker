@@ -64,6 +64,16 @@ class ProjectionTests(unittest.TestCase):
         self.assertEqual(self.submission["fields"], source_before)
         self.assertEqual(self.client.calls[0][2], self.client.calls[1][2])
 
+    def test_preset_3mf_uses_the_same_attachment_projection(self):
+        service = ProjectionService(self.client)
+        submission = {"record_id": "submission-3mf", "fields": {"preset 3mf": [{"file_token": "measured-3mf"}]}}
+        preset = {"record_id": "preset-3mf", "fields": {}}
+        service.project_submission_to_preset(submission=submission, preset=preset)
+        self.assertEqual(
+            self.client.calls[-1][2]["preset 3mf"],
+            [{"file_token": "measured-3mf"}],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -75,7 +75,9 @@ PHOTO_FIELDS = (
 )
 ATTACHMENT_MAPPINGS = tuple(
     (source_field, "uploaded_json") for source_field in SOURCE_PROFILE_FIELDS
-) + tuple((field, field) for field in PHOTO_FIELDS)
+) + (("preset 3mf", "preset 3mf"),) + tuple(
+    (field, field) for field in PHOTO_FIELDS
+)
 
 TARGET_PI_FIELD = "pi_code"
 TARGET_PRINTER_FIELD = "printer"
@@ -155,15 +157,9 @@ def build_target_fields(record_id: str, source_fields: dict[str, Any]) -> dict[s
         result[TARGET_PI_FIELD] = copy.deepcopy(pi_code)
     if printer is not None:
         result[TARGET_PRINTER_FIELD] = copy.deepcopy(printer)
-    for field in PHOTO_FIELDS:
-        if field in source_fields:
-            result[field] = _attachment_value(source_fields[field])
-    profile_field = next(
-        (field for field in SOURCE_PROFILE_FIELDS if field in source_fields),
-        None,
-    )
-    if profile_field:
-        result["uploaded_json"] = _attachment_value(source_fields[profile_field])
+    for source_field, target_field in ATTACHMENT_MAPPINGS:
+        if source_field in source_fields:
+            result[target_field] = _attachment_value(source_fields[source_field])
     return result
 
 

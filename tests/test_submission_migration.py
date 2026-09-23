@@ -19,6 +19,7 @@ class SubmissionMigrationTests(unittest.TestCase):
                 {"file_token": "photo-3"},
             ],
             "preset data": [{"file_token": "json-1"}],
+            "preset 3mf": [{"file_token": "3mf-1"}],
             "status": "完成",
             "ignored": "must not be copied",
         }
@@ -30,10 +31,11 @@ class SubmissionMigrationTests(unittest.TestCase):
         self.assertEqual(fields["冷却参数照片"], [{"file_token": "photo-1"}])
         self.assertEqual(fields["其他照片"], [{"file_token": "photo-2"}, {"file_token": "photo-3"}])
         self.assertEqual(fields["uploaded_json"], [{"file_token": "json-1"}])
+        self.assertEqual(fields["preset 3mf"], [{"file_token": "3mf-1"}])
         self.assertNotIn("ignored", fields)
         self.assertEqual(
             set(fields)
-            - {"submission_id", "status", "pi_code", "printer", "冷却参数照片", "其他照片", "uploaded_json"},
+            - {"submission_id", "status", "pi_code", "printer", "冷却参数照片", "其他照片", "uploaded_json", "preset 3mf"},
             set(),
         )
 
