@@ -27,6 +27,8 @@ UPLOAD_URL = "https://open.feishu.cn/open-apis/drive/v1/medias/upload_all"
 SUBMISSION_TABLE_ENV = "FEISHU_SUBMISSION_TABLE_ID"
 PRESET_TABLE_ENV = "FEISHU_TABLE_ID"
 VERSION_TABLE_ENV = "FEISHU_VERSION_TABLE_ID"
+PRESET_DATA_FIELD = "preset data"
+LEGACY_PRESET_DATA_FIELD = "uploaded_json"
 
 
 def load_env(path: Path = Path(".env")) -> dict[str, str]:
@@ -84,6 +86,14 @@ def _attachment_list(value: object) -> list[dict[str, Any]]:
     if isinstance(value, dict):
         value = [value]
     return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _preset_data_attachments(fields: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read the renamed field, with a transition fallback for old records."""
+    value = fields.get(PRESET_DATA_FIELD)
+    if value in (None, "", []):
+        value = fields.get(LEGACY_PRESET_DATA_FIELD)
+    return _attachment_list(value)
 
 
 class FeishuClient:
@@ -376,7 +386,7 @@ class SubmissionEnrichment:
             validation = {"valid": False, "errors": [str(exc)], "warnings": []}
             self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
             raise ValidationFailure(validation) from exc
-        attachments = _attachment_list(fields.get("uploaded_json"))
+        attachments = _preset_data_attachments(fields)
         if not attachments:
             validation = {"valid": False, "errors": ["Submission 缺少 uploaded_json 附件"], "warnings": []}
             self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})

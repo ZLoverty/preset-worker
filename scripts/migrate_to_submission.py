@@ -74,7 +74,7 @@ PHOTO_FIELDS = (
     "其他照片",
 )
 ATTACHMENT_MAPPINGS = tuple(
-    (source_field, "uploaded_json") for source_field in SOURCE_PROFILE_FIELDS
+    (source_field, "preset data") for source_field in SOURCE_PROFILE_FIELDS
 ) + (("preset 3mf", "preset 3mf"),) + tuple(
     (field, field) for field in PHOTO_FIELDS
 )
@@ -446,10 +446,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"计划迁移 {len(plans)} 条，照片字段 {len(PHOTO_FIELDS)} 个")
         for record_id, _source_fields, fields in plans:
             photo_count = sum(len(fields.get(name, [])) for name in PHOTO_FIELDS)
-            uploaded_json_count = len(fields.get("uploaded_json", []))
+            preset_data_count = len(fields.get("preset data", []))
             print(
                 f"  {record_id} -> {fields[TARGET_SUBMISSION_ID_FIELD]} "
-                f"photos={photo_count} uploaded_json={uploaded_json_count}"
+                f"photos={photo_count} preset_data={preset_data_count}"
             )
         if args.dry_run:
             print("(--dry-run，未写入)")

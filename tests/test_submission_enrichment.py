@@ -24,7 +24,7 @@ class FakeClient:
                 "slicer": [{"text": "BambuStudio"}],
                 "method_version": "2.1",
                 "preset_key": "L2002CF | BBL P2S | BambuStudio",
-                "uploaded_json": [{"file_token": "uploaded"}],
+                "preset data": [{"file_token": "uploaded"}],
             },
         }
         self.files = {"uploaded": json.dumps(uploaded).encode() if isinstance(uploaded, dict) else uploaded}

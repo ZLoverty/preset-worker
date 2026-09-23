@@ -1,4 +1,4 @@
-"""Download attachments from the uploaded_json field in the submission table."""
+"""Download attachments from the preset data field in the submission table."""
 
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ from urllib.request import Request, urlopen
 AUTH_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
 BITABLE_API = "https://open.feishu.cn/open-apis/bitable/v1"
 MEDIA_URL = "https://open.feishu.cn/open-apis/drive/v1/medias/{}/download"
+PRESET_DATA_FIELD = "preset data"
+LEGACY_PRESET_DATA_FIELD = "uploaded_json"
 
 
 def load_env(path: Path) -> dict[str, str]:
@@ -124,7 +126,7 @@ def download(url: str, token: str, destination: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="下载 submission table 的 uploaded_json 附件")
     parser.add_argument("--env", type=Path, default=Path(".env"))
-    parser.add_argument("--output", type=Path, default=Path("downloads/uploaded_json"))
+    parser.add_argument("--output", type=Path, default=Path("downloads/preset_data"))
     parser.add_argument("--force", action="store_true", help="覆盖已存在的文件")
     args = parser.parse_args()
 
@@ -135,7 +137,10 @@ def main() -> int:
         downloaded = 0
         for record in records:
             record_id = record.get("record_id", "unknown")
-            attachments = attachment_list(record.get("fields", {}).get("uploaded_json"))
+            fields = record.get("fields", {})
+            attachments = attachment_list(fields.get(PRESET_DATA_FIELD))
+            if not attachments:
+                attachments = attachment_list(fields.get(LEGACY_PRESET_DATA_FIELD))
             for index, attachment in enumerate(attachments, start=1):
                 file_token = attachment.get("file_token") or attachment.get("token")
                 url = attachment.get("url") or attachment.get("tmp_url")
