@@ -60,7 +60,10 @@ def _api_json(url: str, token: str, *, method: str = "GET", payload: dict | None
     except (URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"飞书 API 请求失败: {method} {url}: {exc}") from exc
     if result.get("code", 0) != 0:
-        raise RuntimeError(f"飞书 API 错误 {result.get('code')}: {result.get('msg')}")
+        raise RuntimeError(
+            f"飞书 API 错误 {result.get('code')}: {result.get('msg')} "
+            f"({method} {url})"
+        )
     return result
 
 
@@ -130,6 +133,14 @@ class FeishuClient:
 
     def update_submission(self, record_id: str, fields: dict[str, Any]) -> None:
         url = f"{BITABLE_API}/apps/{self.app_token}/tables/{self.submission_table_id}/records/{record_id}"
+        _api_json(url, self.token, method="PUT", payload={"fields": fields})
+
+    def create_record(self, table_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+        url = f"{BITABLE_API}/apps/{self.app_token}/tables/{table_id}/records"
+        return _api_json(url, self.token, method="POST", payload={"fields": fields}).get("data", {}).get("record", {})
+
+    def update_record(self, table_id: str, record_id: str, fields: dict[str, Any]) -> None:
+        url = f"{BITABLE_API}/apps/{self.app_token}/tables/{table_id}/records/{record_id}"
         _api_json(url, self.token, method="PUT", payload={"fields": fields})
 
     def download_attachment(self, attachment: dict[str, Any]) -> bytes:
@@ -309,14 +320,16 @@ class SubmissionEnrichment:
             None,
         )
 
-    def _base_json(self, preset: dict[str, Any]) -> tuple[str, Any | None]:
+    def _base_json(self, preset: dict[str, Any]) -> tuple[str, str | None, Any | None]:
         preset_fields = preset.get("fields", {})
         base_version_id = _lookup_text(preset_fields.get("current_version_id"))
         if not base_version_id:
-            return "", None
+            base_version_id = _lookup_text(preset_fields.get("current_version"))
+        if not base_version_id:
+            return "", None, None
         versions = self.client.list_records(self.client.version_table_id)
         version = next(
-            (item for item in versions if item.get("fields", {}).get("version_id") == base_version_id),
+            (item for item in versions if _lookup_text(item.get("fields", {}).get("version_id")) == base_version_id),
             None,
         )
         if not version:
@@ -325,7 +338,9 @@ class SubmissionEnrichment:
         if not attachments:
             raise RuntimeError(f"base version 没有 canonical_json: {base_version_id}")
         try:
-            return base_version_id, json.loads(self.client.download_attachment(attachments[0]).decode("utf-8"))
+            return base_version_id, version.get("record_id") or version.get("id"), json.loads(
+                self.client.download_attachment(attachments[0]).decode("utf-8")
+            )
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"base version canonical_json 无法解析: {base_version_id}") from exc
 
@@ -390,7 +405,7 @@ class SubmissionEnrichment:
         canonical = processor.canonicalize(uploaded)
         preset = self._find_preset(preset_key)
         operation = "UPDATE" if preset else "CREATE"
-        base_version_id, base_json = self._base_json(preset) if preset else ("", None)
+        base_version_id, base_version_record_id, base_json = self._base_json(preset) if preset else ("", None, None)
         diff = calculate_diff(base_json, canonical)
         canonical_bytes = json.dumps(canonical, ensure_ascii=False, indent=2).encode("utf-8")
         file_token = None
@@ -412,7 +427,7 @@ class SubmissionEnrichment:
             record["record_id"],
             {
                 "operation": result.operation,
-                "base_version_id": result.base_version_id,
+                "base_version_id": [base_version_record_id] if base_version_record_id else [],
                 "canonical_json": [{"file_token": file_token}],
                 "diff": json.dumps(result.diff, ensure_ascii=False),
                 "validation": json.dumps(result.validation, ensure_ascii=False),
