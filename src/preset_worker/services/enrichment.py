@@ -418,7 +418,8 @@ class SubmissionEnrichment:
             except (UnicodeDecodeError, json.JSONDecodeError):
                 pass
         if not file_token:
-            uploaded_file = self.client.upload_attachment(f"{submission_id}_canonical.json", canonical_bytes)
+            canonical_name = str(canonical.get("name") or submission_id).strip()
+            uploaded_file = self.client.upload_attachment(f"{canonical_name}.json", canonical_bytes)
             file_token = uploaded_file.get("file_token") or uploaded_file.get("token")
         if not file_token:
             raise RuntimeError("上传 canonical_json 后没有返回 file_token")

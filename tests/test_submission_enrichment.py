@@ -61,6 +61,7 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         self.assertEqual(result.status, "READY_FOR_REVIEW")
         self.assertEqual(result.canonical_json["name"], "L2002CF @BBL P2S")
         self.assertEqual(result.canonical_json["pm_method_version"], "2.1")
+        self.assertEqual(client.uploads[0][0], "L2002CF @BBL P2S.json")
 
     def test_formula_preset_key_is_read_but_not_written(self):
         client = FakeClient({"name": "new", "version": "1"})
