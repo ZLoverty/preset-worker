@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .enrichment import FeishuClient, _attachment_list, _lookup_text, load_env
+from .projection import ProjectionService
 
 
 APPROVING = "APPROVING"
@@ -75,8 +76,9 @@ class PublicationResult:
 
 
 class SubmissionPublisher:
-    def __init__(self, client: FeishuClient):
+    def __init__(self, client: FeishuClient, projection_service: ProjectionService | None = None):
         self.client = client
+        self.projection_service = projection_service or ProjectionService(client)
 
     def _find_submission_version(self, submission: dict[str, Any]) -> dict[str, Any] | None:
         submission_record_id = submission["record_id"]
@@ -107,17 +109,11 @@ class SubmissionPublisher:
             {"published_version_id": version_id, "status": APPROVED},
         )
 
-    def _project_process_photos(self, preset: dict[str, Any], submission: dict[str, Any]) -> None:
-        submission_fields = submission.get("fields", {})
-        photos = submission_fields.get("process_photos")
-        if photos is None:
-            photos = submission_fields.get("photos")
-        if photos is not None and "photos" in preset.get("fields", {}):
-            self.client.update_record(
-                self.client.preset_table_id,
-                preset["record_id"],
-                {"photos": photos},
-            )
+    def _project_current_state(self, preset: dict[str, Any], submission: dict[str, Any]) -> None:
+        self.projection_service.project_submission_to_preset(
+            submission=submission,
+            preset=preset,
+        )
 
     def _repair_existing(
         self,
@@ -144,7 +140,7 @@ class SubmissionPublisher:
                     {"current_version": [version["record_id"]]},
                 )
                 preset = self._find_preset(_lookup_text(fields.get("preset_key"))) or preset
-            self._project_process_photos(preset, submission)
+            self._project_current_state(preset, submission)
         # If a newer version is current, never roll it back.  The source
         # Submission can still be marked as published against its own version.
         self._set_submission_published(submission, version_id)
@@ -253,7 +249,7 @@ class SubmissionPublisher:
             preset["record_id"],
             {"current_version": [version_record_id]},
         )
-        self._project_process_photos(preset, submission)
+        self._project_current_state(preset, submission)
         self._set_submission_published(submission, version_id)
         return PublicationResult(
             submission_id,

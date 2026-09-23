@@ -33,7 +33,8 @@ class FakeClient:
                 "reviewer": [{"id": "user-review"}],
                 "submitted_at": 100,
                 "reviewed_at": 200,
-                "photos": [{"file_token": "photo-1"}],
+                "冷却参数照片": [{"file_token": "photo-1"}],
+                "最大体积流量照片": [],
             },
         }
         self.presets = []
@@ -146,14 +147,59 @@ class SubmissionPublicationTests(unittest.TestCase):
         self.assertEqual(result.version_id, "X@v8")
         self.assertEqual(client.presets[0]["fields"]["current_version"][0]["text"], "X@v9")
 
+    def test_stale_recovery_does_not_project_older_photos(self):
+        client = FakeClient()
+        client.presets = [{
+            "record_id": "preset-1",
+            "fields": {
+                "preset_key": "X",
+                "冷却参数照片": [{"file_token": "newer-photo"}],
+                "current_version": [{"text": "X@v9", "record_ids": ["version-9"]}],
+            },
+        }]
+        client.versions = [
+            {"record_id": "version-8", "fields": {"version_id": "X@v8", "version_no": 8, "source_submission": [{"record_ids": ["sub-rec"]}]}},
+            {"record_id": "version-9", "fields": {"version_id": "X@v9", "version_no": 9}},
+        ]
+        client.submission["fields"]["status"] = APPROVING
+        SubmissionPublisher(client).publish_submission("S1")
+        self.assertEqual(client.presets[0]["fields"]["冷却参数照片"], [{"file_token": "newer-photo"}])
+
+    def test_projection_failure_is_repaired_without_extra_version(self):
+        client = FakeClient()
+
+        class FailOnce:
+            def __init__(self):
+                self.failed = False
+
+            def project_submission_to_preset(self, *, submission, preset):
+                if not self.failed:
+                    self.failed = True
+                    raise RuntimeError("simulated projection failure")
+                client.update_record(client.preset_table_id, preset["record_id"], {
+                    "冷却参数照片": submission["fields"].get("冷却参数照片", []),
+                    "最大体积流量照片": submission["fields"].get("最大体积流量照片", []),
+                })
+
+        projection = FailOnce()
+        publisher = SubmissionPublisher(client, projection_service=projection)
+        with self.assertRaises(RuntimeError):
+            publisher.publish_submission("S1")
+        self.assertNotEqual(client.submission["fields"].get("status"), APPROVED)
+        self.assertEqual(len(client.versions), 1)
+        publisher.publish_submission("S1")
+        self.assertEqual(len(client.versions), 1)
+        self.assertEqual(client.submission["fields"]["status"], APPROVED)
+
     def test_process_photo_projection(self):
         client = FakeClient()
-        client.presets = [{"record_id": "preset-1", "fields": {"preset_key": "X", "photos": [], "current_version": [{"text": "X@v1", "record_ids": ["version-1"]}]}}]
+        client.presets = [{"record_id": "preset-1", "fields": {"preset_key": "X", "冷却参数照片": [], "最大体积流量照片": [{"file_token": "old"}], "current_version": [{"text": "X@v1", "record_ids": ["version-1"]}]}}]
         client.submission["fields"]["operation"] = "UPDATE"
         client.submission["fields"]["base_version_id"] = "X@v1"
         client.versions = [{"record_id": "version-1", "fields": {"version_id": "X@v1", "version_no": 1}}]
         SubmissionPublisher(client).publish_submission("S1")
-        self.assertEqual(client.presets[0]["fields"]["photos"], [{"file_token": "photo-1"}])
+        self.assertEqual(client.presets[0]["fields"]["冷却参数照片"], [{"file_token": "photo-1"}])
+        self.assertEqual(client.presets[0]["fields"]["最大体积流量照片"], [])
 
 
 if __name__ == "__main__":
