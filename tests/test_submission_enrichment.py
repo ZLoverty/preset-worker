@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from submission_enrichment import (
+from preset_worker.services.enrichment import (
     SubmissionEnrichment,
     UnsupportedSlicerError,
     ValidationFailure,

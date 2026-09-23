@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from submission_publication import (
+from preset_worker.services.publication import (
     APPROVED,
     APPROVING,
     VERSION_CONFLICT,

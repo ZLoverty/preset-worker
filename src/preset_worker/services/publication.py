@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from submission_enrichment import FeishuClient, _attachment_list, _lookup_text, load_env
+from .enrichment import FeishuClient, _attachment_list, _lookup_text, load_env
 
 
 APPROVING = "APPROVING"
