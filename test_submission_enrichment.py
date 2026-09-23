@@ -1,7 +1,12 @@
 import json
 import unittest
 
-from submission_enrichment import SubmissionEnrichment, ValidationFailure, calculate_diff
+from submission_enrichment import (
+    SubmissionEnrichment,
+    UnsupportedSlicerError,
+    ValidationFailure,
+    calculate_diff,
+)
 
 
 class FakeClient:
@@ -17,6 +22,8 @@ class FakeClient:
                 "pi_code": [{"text": "L2002CF"}],
                 "printer": [{"text": "BBL P2S"}],
                 "slicer": [{"text": "BambuStudio"}],
+                "method_version": "2.1",
+                "preset_key": "L2002CF | BBL P2S | BambuStudio",
                 "uploaded_json": [{"file_token": "uploaded"}],
             },
         }
@@ -47,22 +54,28 @@ class FakeClient:
 
 class SubmissionEnrichmentTests(unittest.TestCase):
     def test_create(self):
-        client = FakeClient({"name": "new", "temperature": "220"})
+        client = FakeClient({"name": "new", "version": "1", "temperature": "220"})
         result = SubmissionEnrichment(client).enrich_submission("S123")
         self.assertEqual(result.operation, "CREATE")
         self.assertEqual(result.base_version_id, "")
         self.assertEqual(result.status, "READY_FOR_REVIEW")
-        self.assertEqual(len(result.diff["added"]), 2)
+        self.assertEqual(result.canonical_json["name"], "L2002CF @BBL P2S")
+        self.assertEqual(result.canonical_json["pm_method_version"], "2.1")
+
+    def test_formula_preset_key_is_read_but_not_written(self):
+        client = FakeClient({"name": "new", "version": "1"})
+        SubmissionEnrichment(client).enrich_submission("S123")
+        self.assertNotIn("preset_key", client.updates[-1])
 
     def test_update_against_current_version(self):
-        client = FakeClient({"name": "new", "temperature": "220"})
+        client = FakeClient({"name": "new", "version": "1", "temperature": "220"})
         client.presets = [{
             "fields": {"preset_key": "L2002CF | BBL P2S | BambuStudio", "current_version_id": [{"text": "P42@v7"}]}
         }]
         client.versions = [{
             "fields": {"version_id": "P42@v7", "canonical_json": [{"file_token": "base"}]}
         }]
-        client.files["base"] = b'{"name":"old","temperature":"220"}'
+        client.files["base"] = b'{"name":"old","version":"1","temperature":"220"}'
         result = SubmissionEnrichment(client).enrich_submission("S123")
         self.assertEqual(result.operation, "UPDATE")
         self.assertEqual(result.base_version_id, "P42@v7")
@@ -81,12 +94,30 @@ class SubmissionEnrichmentTests(unittest.TestCase):
             SubmissionEnrichment(client).enrich_submission("S123")
         self.assertEqual(client.updates[-1]["status"], "VALIDATION_FAILED")
 
-    def test_normalization_keeps_original_and_sorts_keys(self):
-        client = FakeClient({"z": 1, "a": {"y": 2, "x": 3}})
+    def test_bambu_version_is_required(self):
+        client = FakeClient({"name": "preset without version"})
+        with self.assertRaises(ValidationFailure) as context:
+            SubmissionEnrichment(client).enrich_submission("S123")
+        self.assertIn("version", context.exception.validation["errors"][0])
+        self.assertEqual(client.updates[-1]["status"], "VALIDATION_FAILED")
+
+    def test_bambu_canonicalization_preserves_other_fields(self):
+        uploaded = {
+            "name": "Generic PLA",
+            "version": "1",
+            "inherits": "Generic PLA",
+            "filament_settings_id": ["x"],
+            "custom": {"nested": True},
+            "pm_method_version": "1.0",
+        }
+        client = FakeClient(uploaded)
         SubmissionEnrichment(client).enrich_submission("S123")
-        self.assertEqual(json.loads(client.files["uploaded"]), {"z": 1, "a": {"y": 2, "x": 3}})
+        self.assertEqual(json.loads(client.files["uploaded"]), uploaded)
         canonical = json.loads(client.uploads[0][1])
-        self.assertEqual(list(canonical), ["a", "z"])
+        self.assertEqual(canonical["name"], "L2002CF @BBL P2S")
+        self.assertEqual(canonical["pm_method_version"], "2.1")
+        self.assertEqual(canonical["inherits"], uploaded["inherits"])
+        self.assertEqual(canonical["custom"], uploaded["custom"])
 
     def test_diff(self):
         diff = calculate_diff({"a": 1, "old": True}, {"a": 2, "new": False})
@@ -95,7 +126,7 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         self.assertEqual(diff["removed"], [{"path": "old", "old": True}])
 
     def test_rerun_does_not_create_preset_or_version(self):
-        client = FakeClient({"name": "same"})
+        client = FakeClient({"name": "same", "version": "1"})
         service = SubmissionEnrichment(client)
         first = service.enrich_submission("S123")
         second = service.enrich_submission("S123")
@@ -103,6 +134,35 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         self.assertEqual(len(client.presets), 0)
         self.assertEqual(len(client.versions), 0)
         self.assertEqual(len(client.uploads), 1)
+
+    def test_unsupported_slicer(self):
+        client = FakeClient({"name": "same", "version": "1"})
+        client.submission["fields"]["slicer"] = [{"text": "OrcaSlicer"}]
+        with self.assertRaises(UnsupportedSlicerError):
+            SubmissionEnrichment(client).enrich_submission("S123")
+        self.assertEqual(client.updates[-1]["status"], "VALIDATION_FAILED")
+
+    def test_missing_method_version(self):
+        client = FakeClient({"name": "same", "version": "1"})
+        del client.submission["fields"]["method_version"]
+        with self.assertRaises(ValidationFailure):
+            SubmissionEnrichment(client).enrich_submission("S123")
+        self.assertEqual(client.updates[-1]["status"], "VALIDATION_FAILED")
+
+    def test_ready_submission_keeps_frozen_baseline(self):
+        client = FakeClient({"name": "same", "version": "1"})
+        client.submission["fields"].update({
+            "status": "READY_FOR_REVIEW",
+            "preset_key": "L2002CF | BBL P2S | BambuStudio",
+            "operation": "UPDATE",
+            "base_version_id": "P42@v7",
+            "diff": "{}",
+            "validation": '{"valid":true}',
+        })
+        client.presets = [{"fields": {"preset_key": "L2002CF | BBL P2S | BambuStudio", "current_version_id": [{"text": "P42@v8"}]}}]
+        result = SubmissionEnrichment(client).enrich_submission("S123")
+        self.assertEqual(result.base_version_id, "P42@v7")
+        self.assertFalse(client.updates)
 
 
 if __name__ == "__main__":

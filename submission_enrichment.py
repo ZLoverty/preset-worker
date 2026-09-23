@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
-import re
+import copy
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -197,19 +197,11 @@ def _lookup_text(value: object) -> str:
     return ""
 
 
-def _preset_key(fields: dict[str, Any]) -> str:
-    values = [_lookup_text(fields.get(name)) for name in ("pi_code", "printer", "slicer")]
-    if not all(values):
-        raise ValueError("Submission 缺少 pi_code、printer 或 slicer")
-    return " | ".join(values)
-
-
-def _canonicalize(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {key: _canonicalize(value[key]) for key in sorted(value)}
-    if isinstance(value, list):
-        return [_canonicalize(item) for item in value]
-    return value
+def _submission_method_version(fields: dict[str, Any]) -> str:
+    # The deployed table calls this field method_version.  Keep the logical
+    # P2 name pm_method_version at the processor boundary.
+    value = fields.get("pm_method_version") or fields.get("method_version")
+    return _lookup_text(value)
 
 
 def validate_json(value: Any) -> dict[str, Any]:
@@ -219,6 +211,42 @@ def validate_json(value: Any) -> dict[str, Any]:
     elif not all(isinstance(key, str) and key for key in value):
         errors.append("JSON object 的字段名必须是非空字符串")
     return {"valid": not errors, "errors": errors, "warnings": []}
+
+
+class UnsupportedSlicerError(ValueError):
+    pass
+
+
+class BambuStudioProcessor:
+    def __init__(self, *, pi_code: str, printer: str, pm_method_version: str):
+        self.pi_code = pi_code
+        self.printer = printer
+        self.pm_method_version = pm_method_version
+
+    def validate(self, uploaded: Any) -> dict[str, Any]:
+        validation = validate_json(uploaded)
+        if validation["valid"] and "version" not in uploaded:
+            validation["valid"] = False
+            validation["errors"].append("BambuStudio JSON 缺少必需字段: version")
+        return validation
+
+    def canonicalize(self, uploaded: Any) -> Any:
+        # P2 has exactly two semantic canonicalization rules.  Deep-copying
+        # protects uploaded_json from in-place mutation.
+        canonical = copy.deepcopy(uploaded)
+        canonical["name"] = f"{self.pi_code} @{self.printer}"
+        canonical["pm_method_version"] = self.pm_method_version
+        return canonical
+
+
+def processor_for(slicer: str, *, pi_code: str, printer: str, pm_method_version: str) -> BambuStudioProcessor:
+    if slicer != "BambuStudio":
+        raise UnsupportedSlicerError(f"暂不支持 slicer: {slicer}")
+    return BambuStudioProcessor(
+        pi_code=pi_code,
+        printer=printer,
+        pm_method_version=pm_method_version,
+    )
 
 
 def _flatten(value: Any, path: str = "") -> dict[str, Any]:
@@ -250,6 +278,15 @@ def calculate_diff(old: Any | None, new: Any) -> dict[str, list[dict[str, Any]]]
     return {key: sorted(value, key=lambda item: item["path"]) for key, value in {"added": added, "removed": removed, "modified": modified}.items()}
 
 
+def _json_field(value: object, default: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return default
+    return value if value is not None else default
+
+
 @dataclass
 class EnrichmentResult:
     operation: str
@@ -268,7 +305,7 @@ class SubmissionEnrichment:
     def _find_preset(self, preset_key: str) -> dict[str, Any] | None:
         return next(
             (record for record in self.client.list_records(self.client.preset_table_id)
-             if record.get("fields", {}).get("preset_key") == preset_key),
+             if _lookup_text(record.get("fields", {}).get("preset_key")) == preset_key),
             None,
         )
 
@@ -292,18 +329,38 @@ class SubmissionEnrichment:
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"base version canonical_json 无法解析: {base_version_id}") from exc
 
+    def _frozen_result(self, record: dict[str, Any]) -> EnrichmentResult:
+        fields = record.get("fields", {})
+        return EnrichmentResult(
+            operation=str(fields.get("operation", "")),
+            preset_key=str(fields.get("preset_key", "")),
+            base_version_id=str(fields.get("base_version_id", "")),
+            canonical_json={},
+            diff=_json_field(fields.get("diff"), {}),
+            validation=_json_field(fields.get("validation"), {}),
+            status=str(fields.get("status", "READY_FOR_REVIEW")),
+        )
+
     def enrich_submission(self, submission_id: str) -> EnrichmentResult:
         record = self.client.get_submission(submission_id)
         fields = record.get("fields", {})
+        if fields.get("status") == "READY_FOR_REVIEW":
+            return self._frozen_result(record)
         try:
-            preset_key = _preset_key(fields)
+            pi_code = _lookup_text(fields.get("pi_code"))
+            printer = _lookup_text(fields.get("printer") or fields.get("machine"))
+            slicer = _lookup_text(fields.get("slicer"))
+            # preset_key is a Bitable formula field and is authoritative.
+            preset_key = _lookup_text(fields.get("preset_key"))
+            pm_method_version = _submission_method_version(fields)
+            if not pi_code or not printer or not slicer or not preset_key:
+                raise ValueError("Submission 缺少 pi_code、machine/printer、slicer 或公式 preset_key")
+            if not pm_method_version:
+                raise ValueError("Submission 缺少 pm_method_version（当前表字段为 method_version）")
         except ValueError as exc:
             validation = {"valid": False, "errors": [str(exc)], "warnings": []}
             self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
             raise ValidationFailure(validation) from exc
-        preset = self._find_preset(preset_key)
-        operation = "UPDATE" if preset else "CREATE"
-        base_version_id, base_json = self._base_json(preset) if preset else ("", None)
         attachments = _attachment_list(fields.get("uploaded_json"))
         if not attachments:
             validation = {"valid": False, "errors": ["Submission 缺少 uploaded_json 附件"], "warnings": []}
@@ -315,11 +372,25 @@ class SubmissionEnrichment:
             validation = {"valid": False, "errors": [f"uploaded_json 不是有效 JSON: {exc}"], "warnings": []}
             self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
             raise ValidationFailure(validation) from exc
-        validation = validate_json(uploaded)
+        try:
+            processor = processor_for(
+                slicer,
+                pi_code=pi_code,
+                printer=printer,
+                pm_method_version=pm_method_version,
+            )
+        except UnsupportedSlicerError as exc:
+            validation = {"valid": False, "errors": [str(exc)], "warnings": []}
+            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
+            raise
+        validation = processor.validate(uploaded)
         if not validation["valid"]:
             self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
             raise ValidationFailure(validation)
-        canonical = _canonicalize(uploaded)
+        canonical = processor.canonicalize(uploaded)
+        preset = self._find_preset(preset_key)
+        operation = "UPDATE" if preset else "CREATE"
+        base_version_id, base_json = self._base_json(preset) if preset else ("", None)
         diff = calculate_diff(base_json, canonical)
         canonical_bytes = json.dumps(canonical, ensure_ascii=False, indent=2).encode("utf-8")
         file_token = None
@@ -327,7 +398,7 @@ class SubmissionEnrichment:
         if existing_canonical:
             try:
                 existing = json.loads(self.client.download_attachment(existing_canonical[0]).decode("utf-8"))
-                if _canonicalize(existing) == canonical:
+                if existing == canonical:
                     file_token = existing_canonical[0].get("file_token") or existing_canonical[0].get("token")
             except (UnicodeDecodeError, json.JSONDecodeError):
                 pass
@@ -340,7 +411,6 @@ class SubmissionEnrichment:
         self.client.update_submission(
             record["record_id"],
             {
-                "preset_key": result.preset_key,
                 "operation": result.operation,
                 "base_version_id": result.base_version_id,
                 "canonical_json": [{"file_token": file_token}],
