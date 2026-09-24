@@ -161,7 +161,13 @@ class SubmissionPublisher:
                 preset_fields[target] = ids
         return self.client.create_record(self.client.preset_table_id, preset_fields)
 
-    def _version_fields(self, submission: dict[str, Any], preset_key: str, version_no: int) -> dict[str, Any]:
+    def _version_fields(
+        self,
+        submission: dict[str, Any],
+        preset_key: str,
+        preset_record_id: str,
+        version_no: int,
+    ) -> dict[str, Any]:
         fields = submission.get("fields", {})
         attachments = _attachment_list(fields.get("canonical_json"))
         if not attachments:
@@ -171,7 +177,9 @@ class SubmissionPublisher:
             raise RuntimeError("canonical_json 附件缺少 file_token")
         now = int(time.time() * 1000)
         result: dict[str, Any] = {
-            "preset_key": preset_key,
+            # PresetVersion.preset_key is a single-record relation to Preset.
+            # Submission.preset_key remains the business key used for lookup.
+            "preset_key": [preset_record_id],
             "version_no": version_no,
             "canonical_json": [{"file_token": file_token}],
             "source_submission": [submission["record_id"]],
@@ -236,10 +244,13 @@ class SubmissionPublisher:
         else:
             raise RuntimeError(f"不支持的 operation: {operation}")
 
+        preset_record_id = preset.get("record_id") or preset.get("id")
+        if not preset_record_id:
+            raise RuntimeError("Preset 不存在 record_id，无法建立 PresetVersion 关联")
         version_id = f"{preset_key}@v{version_no}"
         version = self.client.create_record(
             self.client.version_table_id,
-            self._version_fields(submission, preset_key, version_no),
+            self._version_fields(submission, preset_key, str(preset_record_id), version_no),
         )
         version_record_id = version.get("record_id") or version.get("id")
         if not version_record_id:

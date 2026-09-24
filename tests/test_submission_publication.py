@@ -81,6 +81,7 @@ class SubmissionPublicationTests(unittest.TestCase):
         self.assertEqual(client.submission["fields"]["status"], APPROVED)
         self.assertEqual(client.presets[0]["fields"]["current_version"], ["version-new-1"])
         self.assertEqual(len(client.versions), 1)
+        self.assertEqual(client.versions[0]["fields"]["preset_key"], ["preset-new-0"])
 
     def test_update(self):
         client = FakeClient("UPDATE")
@@ -93,6 +94,7 @@ class SubmissionPublicationTests(unittest.TestCase):
         result = SubmissionPublisher(client).publish_submission("S1")
         self.assertEqual(result.version_id, "X@v8")
         self.assertEqual(client.submission["fields"]["published_version_id"], "X@v8")
+        self.assertEqual(client.versions[-1]["fields"]["preset_key"], ["preset-1"])
 
     def test_metadata_snapshot(self):
         client = FakeClient()
