@@ -28,6 +28,19 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(calls, ["S123"])
 
+    def test_cli_run_once_routes_runtime(self):
+        class FakeRuntime:
+            def __init__(self):
+                self.calls = 0
+
+            def run_once(self):
+                self.calls += 1
+
+        runtime = FakeRuntime()
+        result = main(["run-once"], runtime_factory=lambda _env: runtime)
+        self.assertEqual(result, 0)
+        self.assertEqual(runtime.calls, 1)
+
     def test_cli_invalid_command(self):
         with self.assertRaises(SystemExit):
             main(["unknown", "S123"])

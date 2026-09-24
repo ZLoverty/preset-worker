@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import copy
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -104,35 +105,94 @@ class FeishuClient:
         missing += [key for key in (SUBMISSION_TABLE_ENV, PRESET_TABLE_ENV, VERSION_TABLE_ENV) if not env.get(key)]
         if missing:
             raise RuntimeError(f".env 缺少配置: {', '.join(missing)}")
-        auth = _api_json(
-            AUTH_URL,
-            token="",
-            method="POST",
-            payload={"app_id": env["FEISHU_APP_ID"], "app_secret": env["FEISHU_APP_SECRET"]},
-        )
-        self.token = auth["tenant_access_token"]
+        self.app_id = env["FEISHU_APP_ID"]
+        self.app_secret = env["FEISHU_APP_SECRET"]
+        self.token = ""
+        self._token_refresh_at = 0.0
+        self._authenticate()
         self.app_token = env["FEISHU_APP_TOKEN"]
-        app_info = _api_json(f"{BITABLE_API}/apps/{self.app_token}", self.token)
+        app_info = self._request_json(f"{BITABLE_API}/apps/{self.app_token}")
         self.parent_node = app_info.get("data", {}).get("app", {}).get("app_token", self.app_token)
         self.submission_table_id = env[SUBMISSION_TABLE_ENV]
         self.preset_table_id = env[PRESET_TABLE_ENV]
         self.version_table_id = env[VERSION_TABLE_ENV]
 
-    def list_records(self, table_id: str) -> list[dict[str, Any]]:
+    def _authenticate(self) -> None:
+        """Get a fresh tenant token and schedule a refresh before expiry."""
+        auth = _api_json(
+            AUTH_URL,
+            token="",
+            method="POST",
+            payload={"app_id": self.app_id, "app_secret": self.app_secret},
+        )
+        self.token = auth["tenant_access_token"]
+        try:
+            expire = max(60, int(auth.get("expire", 7200)))
+        except (TypeError, ValueError):
+            expire = 7200
+        self._token_refresh_at = time.monotonic() + expire - 60
+
+    def _request_json(
+        self,
+        url: str,
+        *,
+        method: str = "GET",
+        payload: dict | None = None,
+    ) -> dict:
+        """Call Feishu with proactive refresh and one invalid-token retry."""
+        if time.monotonic() >= self._token_refresh_at:
+            self._authenticate()
+        try:
+            return _api_json(url, self.token, method=method, payload=payload)
+        except RuntimeError as exc:
+            detail = str(exc)
+            if "99991663" not in detail and "Invalid access token" not in detail:
+                raise
+            self._authenticate()
+            return _api_json(url, self.token, method=method, payload=payload)
+
+    def list_records(
+        self,
+        table_id: str,
+        *,
+        limit: int | None = None,
+        filter_expression: str | None = None,
+    ) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
         page_token = ""
         while True:
-            query = {"page_size": "100"}
+            page_size = min(limit, 100) if limit else 100
+            query = {"page_size": str(page_size)}
+            if filter_expression:
+                query["filter"] = filter_expression
             if page_token:
                 query["page_token"] = page_token
             url = f"{BITABLE_API}/apps/{self.app_token}/tables/{table_id}/records?{urlencode(query)}"
-            data = _api_json(url, self.token).get("data", {})
+            data = self._request_json(url).get("data", {})
             records.extend(data.get("items", []))
+            if limit and len(records) >= limit:
+                return records[:limit]
             if not data.get("has_more"):
                 return records
             page_token = data.get("page_token", "")
             if not page_token:
                 raise RuntimeError("分页响应缺少 page_token")
+
+    def find_submission_candidates(
+        self,
+        status: str,
+        *,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Find actionable Submission records using a server-side filter."""
+        if limit <= 0:
+            return []
+        expression = f'CurrentValue.[status]="{status}"'
+        return self.list_records(
+            self.submission_table_id,
+            limit=limit,
+            filter_expression=expression,
+        )
 
     def get_submission(self, submission_id: str) -> dict[str, Any]:
         for record in self.list_records(self.submission_table_id):
@@ -143,15 +203,15 @@ class FeishuClient:
 
     def update_submission(self, record_id: str, fields: dict[str, Any]) -> None:
         url = f"{BITABLE_API}/apps/{self.app_token}/tables/{self.submission_table_id}/records/{record_id}"
-        _api_json(url, self.token, method="PUT", payload={"fields": fields})
+        self._request_json(url, method="PUT", payload={"fields": fields})
 
     def create_record(self, table_id: str, fields: dict[str, Any]) -> dict[str, Any]:
         url = f"{BITABLE_API}/apps/{self.app_token}/tables/{table_id}/records"
-        return _api_json(url, self.token, method="POST", payload={"fields": fields}).get("data", {}).get("record", {})
+        return self._request_json(url, method="POST", payload={"fields": fields}).get("data", {}).get("record", {})
 
     def update_record(self, table_id: str, record_id: str, fields: dict[str, Any]) -> None:
         url = f"{BITABLE_API}/apps/{self.app_token}/tables/{table_id}/records/{record_id}"
-        _api_json(url, self.token, method="PUT", payload={"fields": fields})
+        self._request_json(url, method="PUT", payload={"fields": fields})
 
     def download_attachment(self, attachment: dict[str, Any]) -> bytes:
         url = _attachment_url(attachment)
