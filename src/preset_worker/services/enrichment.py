@@ -30,6 +30,7 @@ PRESET_TABLE_ENV = "FEISHU_TABLE_ID"
 VERSION_TABLE_ENV = "FEISHU_VERSION_TABLE_ID"
 PRESET_DATA_FIELD = "preset data"
 LEGACY_PRESET_DATA_FIELD = "uploaded_json"
+FORMAL_ENRICHMENT_STATUS = "VALIDATING"
 
 
 def load_env(path: Path = Path(".env")) -> dict[str, str]:
@@ -196,8 +197,10 @@ class FeishuClient:
 
     def get_submission(self, submission_id: str) -> dict[str, Any]:
         for record in self.list_records(self.submission_table_id):
+            record_id = record.get("record_id") or record.get("id")
             fields = record.get("fields", {})
-            if fields.get("submission_id") == submission_id:
+            field_submission_id = _lookup_text(fields.get("submission_id"))
+            if submission_id in {record_id, field_submission_id}:
                 return record
         raise LookupError(f"找不到 submission: {submission_id}")
 
@@ -431,6 +434,10 @@ class SubmissionEnrichment:
         fields = record.get("fields", {})
         if fields.get("status") == "READY_FOR_REVIEW":
             return self._frozen_result(record)
+        if fields.get("status") != FORMAL_ENRICHMENT_STATUS:
+            raise RuntimeError(
+                f"Submission is {fields.get('status', 'unknown')} and is not eligible for formal enrichment."
+            )
         try:
             pi_code = _lookup_text(fields.get("pi_code"))
             printer = _lookup_text(fields.get("printer") or fields.get("machine"))

@@ -12,6 +12,9 @@ class FakeRepository:
                 {"record_id": "r2", "fields": {"submission_id": "S2"}},
                 {"record_id": "r3", "fields": {"submission_id": "S3"}},
             ],
+            "DRAFT": [
+                {"record_id": "draft-1", "fields": {"submission_id": "D1"}},
+            ],
             PUBLICATION_STATUS: [
                 {"record_id": "r4", "fields": {"submission_id": "S4"}},
             ],
@@ -53,6 +56,17 @@ class RuntimeTests(unittest.TestCase):
             publication_service=lambda _submission_id: None,
         ).run_once()
         self.assertEqual(calls, ["S1", "S2", "S3"])
+
+    def test_draft_is_not_an_actionable_state(self):
+        repo = FakeRepository()
+        calls = []
+        WorkerRuntime(
+            repo,
+            enrichment_service=lambda submission_id: calls.append(("enrich", submission_id)),
+            publication_service=lambda submission_id: calls.append(("publish", submission_id)),
+        ).run_once()
+        self.assertNotIn(("enrich", "D1"), calls)
+        self.assertEqual(repo.queries, [(ENRICHMENT_STATUS, 20), (PUBLICATION_STATUS, 20)])
 
     def test_invalid_runtime_configuration(self):
         with self.assertRaises(ValueError):

@@ -25,7 +25,7 @@ PRESET_WORKER_POLL_INTERVAL=10
 PRESET_WORKER_BATCH_SIZE=20
 ```
 
-The Worker processes `DRAFT` enrichment candidates and `APPROVING`
+The Worker processes `VALIDATING` enrichment candidates and `APPROVING`
 publication candidates serially.  P6 assumes only one production Worker
 instance operates on the same Bitable workflow.
 ```

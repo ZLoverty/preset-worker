@@ -7,13 +7,15 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from .services.enrichment import SubmissionEnrichment, _lookup_text
+from .services.enrichment import FORMAL_ENRICHMENT_STATUS, SubmissionEnrichment, _lookup_text
 from .services.publication import SubmissionPublisher
 
 
 logger = logging.getLogger(__name__)
 
-ENRICHMENT_STATUS = "DRAFT"
+# DRAFT is an engineer-owned editing state. Only an explicit formal
+# submission request makes a record eligible for background enrichment.
+ENRICHMENT_STATUS = FORMAL_ENRICHMENT_STATUS
 PUBLICATION_STATUS = "APPROVING"
 
 

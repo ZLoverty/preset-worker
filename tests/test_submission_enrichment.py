@@ -2,6 +2,7 @@ import json
 import unittest
 
 from preset_worker.services.enrichment import (
+    FeishuClient,
     SubmissionEnrichment,
     UnsupportedSlicerError,
     ValidationFailure,
@@ -19,6 +20,7 @@ class FakeClient:
             "record_id": "record-1",
             "fields": {
                 "submission_id": "S123",
+                "status": "VALIDATING",
                 "pi_code": [{"text": "L2002CF"}],
                 "printer": [{"text": "BBL P2S"}],
                 "slicer": [{"text": "BambuStudio"}],
@@ -53,6 +55,27 @@ class FakeClient:
 
 
 class SubmissionEnrichmentTests(unittest.TestCase):
+    def test_get_submission_accepts_record_id_and_wrapped_submission_id(self):
+        client = FeishuClient.__new__(FeishuClient)
+        client.submission_table_id = "submission"
+        record = {
+            "record_id": "recvw7M1BWm0um",
+            "fields": {"submission_id": [{"text": "S123"}]},
+        }
+        client.list_records = lambda _table_id: [record]
+
+        self.assertIs(client.get_submission("recvw7M1BWm0um"), record)
+        self.assertIs(client.get_submission("S123"), record)
+
+    def test_draft_is_rejected_without_mutation(self):
+        client = FakeClient({"name": "draft", "version": "1"})
+        client.submission["fields"]["status"] = "DRAFT"
+        before = dict(client.submission["fields"])
+        with self.assertRaisesRegex(RuntimeError, "DRAFT.*not eligible"):
+            SubmissionEnrichment(client).enrich_submission("S123")
+        self.assertEqual(client.submission["fields"], before)
+        self.assertFalse(client.updates)
+
     def test_create(self):
         client = FakeClient({"name": "new", "version": "1", "temperature": "220"})
         result = SubmissionEnrichment(client).enrich_submission("S123")
