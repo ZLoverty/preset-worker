@@ -133,11 +133,16 @@ class SubmissionPublisher:
         current_no = _version_no(self._find_version(_current_version_text(preset)))
         current_record_id = _current_version_record_id(preset)
         if current_no is None or current_no <= version_no:
-            if current_record_id != version["record_id"]:
+            current_text = _lookup_text(preset.get("fields", {}).get("current_version_no_text"))
+            version_text = f"v{version_no}"
+            if current_record_id != version["record_id"] or current_text != version_text:
                 self.client.update_record(
                     self.client.preset_table_id,
                     preset["record_id"],
-                    {"current_version": [version["record_id"]]},
+                    {
+                        "current_version": [version["record_id"]],
+                        "current_version_no_text": version_text,
+                    },
                 )
                 preset = self._find_preset(_lookup_text(fields.get("preset_key"))) or preset
             self._project_current_state(preset, submission)
@@ -258,7 +263,10 @@ class SubmissionPublisher:
         self.client.update_record(
             self.client.preset_table_id,
             preset["record_id"],
-            {"current_version": [version_record_id]},
+            {
+                "current_version": [version_record_id],
+                "current_version_no_text": f"v{version_no}",
+            },
         )
         self._project_current_state(preset, submission)
         self._set_submission_published(submission, version_id)

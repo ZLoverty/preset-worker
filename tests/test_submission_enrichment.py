@@ -8,6 +8,7 @@ from preset_worker.services.enrichment import (
     ValidationFailure,
     calculate_diff,
 )
+from preset_worker.services.preview import PreviewService
 
 
 class FakeClient:
@@ -75,6 +76,77 @@ class SubmissionEnrichmentTests(unittest.TestCase):
             SubmissionEnrichment(client).enrich_submission("S123")
         self.assertEqual(client.submission["fields"], before)
         self.assertFalse(client.updates)
+
+    def test_preview_create_returns_to_draft_without_publication_artifacts(self):
+        client = FakeClient({"name": "new", "version": "1"})
+        client.submission["fields"]["status"] = "PREVIEW_REQUESTED"
+
+        result = PreviewService(client).preview_submission("S123")
+
+        self.assertEqual(result.operation, "CREATE")
+        self.assertEqual(client.submission["fields"]["status"], "DRAFT")
+        self.assertEqual(client.presets, [])
+        self.assertEqual(client.versions, [])
+        self.assertEqual(client.submission["fields"]["canonical_json"], [{"file_token": "canonical-1"}])
+
+    def test_preview_update_uses_current_base_without_publication_artifacts(self):
+        client = FakeClient({"name": "new", "version": "1", "temperature": "220"})
+        client.submission["fields"]["status"] = "PREVIEW_REQUESTED"
+        client.presets = [{
+            "fields": {
+                "preset_key": "L2002CF | BBL P2S | BambuStudio",
+                "current_version_id": [{"text": "P42@v7"}],
+            }
+        }]
+        client.versions = [{
+            "record_id": "version-record-7",
+            "fields": {"version_id": "P42@v7", "canonical_json": [{"file_token": "base"}]},
+        }]
+        client.files["base"] = b'{"name":"old","version":"1","temperature":"220"}'
+
+        result = PreviewService(client).preview_submission("S123")
+
+        self.assertEqual(result.operation, "UPDATE")
+        self.assertEqual(result.base_version_id, "P42@v7")
+        self.assertEqual(result.diff["modified"][0]["path"], "name")
+        self.assertEqual(client.submission["fields"]["status"], "DRAFT")
+        self.assertEqual(client.presets[0]["fields"]["current_version_id"][0]["text"], "P42@v7")
+
+    def test_preview_invalid_candidate_returns_to_draft(self):
+        client = FakeClient(b"not-json")
+        client.submission["fields"]["status"] = "PREVIEW_REQUESTED"
+
+        with self.assertRaises(ValidationFailure):
+            PreviewService(client).preview_submission("S123")
+
+        self.assertEqual(client.submission["fields"]["status"], "DRAFT")
+        self.assertNotEqual(client.submission["fields"].get("status"), "VALIDATION_FAILED")
+        self.assertFalse(client.uploads)
+
+    def test_preview_state_guard_does_not_mutate_draft(self):
+        client = FakeClient({"name": "draft", "version": "1"})
+        client.submission["fields"]["status"] = "DRAFT"
+        before = dict(client.submission["fields"])
+
+        with self.assertRaisesRegex(RuntimeError, "DRAFT.*not eligible"):
+            PreviewService(client).preview_submission("S123")
+
+        self.assertEqual(client.submission["fields"], before)
+        self.assertFalse(client.updates)
+
+    def test_preview_and_enrichment_share_candidate_computation(self):
+        formal_client = FakeClient({"name": "new", "version": "1", "temperature": "220"})
+        preview_client = FakeClient({"name": "new", "version": "1", "temperature": "220"})
+        preview_client.submission["fields"]["status"] = "PREVIEW_REQUESTED"
+
+        formal = SubmissionEnrichment(formal_client).process_candidate(
+            formal_client.submission,
+            "S123",
+        )
+        preview = PreviewService(preview_client).preview_submission("S123")
+
+        self.assertEqual(preview.canonical_json, formal.canonical_json)
+        self.assertEqual(preview.diff, formal.diff)
 
     def test_create(self):
         client = FakeClient({"name": "new", "version": "1", "temperature": "220"})

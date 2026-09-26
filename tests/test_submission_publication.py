@@ -80,6 +80,7 @@ class SubmissionPublicationTests(unittest.TestCase):
         self.assertEqual(result.version_id, "X@v1")
         self.assertEqual(client.submission["fields"]["status"], APPROVED)
         self.assertEqual(client.presets[0]["fields"]["current_version"], ["version-new-1"])
+        self.assertEqual(client.presets[0]["fields"]["current_version_no_text"], "v1")
         self.assertEqual(len(client.versions), 1)
         self.assertEqual(client.versions[0]["fields"]["preset_key"], ["preset-new-0"])
 
@@ -94,6 +95,7 @@ class SubmissionPublicationTests(unittest.TestCase):
         result = SubmissionPublisher(client).publish_submission("S1")
         self.assertEqual(result.version_id, "X@v8")
         self.assertEqual(client.submission["fields"]["published_version_id"], "X@v8")
+        self.assertEqual(client.presets[0]["fields"]["current_version_no_text"], "v8")
         self.assertEqual(client.versions[-1]["fields"]["preset_key"], ["preset-1"])
 
     def test_metadata_snapshot(self):
@@ -137,9 +139,41 @@ class SubmissionPublicationTests(unittest.TestCase):
         self.assertEqual(first.version_id, second.version_id)
         self.assertEqual(len(client.versions), 1)
 
+    def test_recovery_repairs_missing_version_text_projection(self):
+        client = FakeClient()
+        client.presets = [{
+            "record_id": "preset-1",
+            "fields": {
+                "preset_key": "X",
+                "current_version": [{"text": "X@v8", "record_ids": ["version-8"]}],
+                "current_version_no_text": "",
+            },
+        }]
+        client.versions = [{
+            "record_id": "version-8",
+            "fields": {
+                "version_id": "X@v8",
+                "version_no": 8,
+                "source_submission": [{"record_ids": ["sub-rec"]}],
+            },
+        }]
+        client.submission["fields"]["status"] = APPROVING
+
+        SubmissionPublisher(client).publish_submission("S1")
+
+        self.assertEqual(client.presets[0]["fields"]["current_version_no_text"], "v8")
+        self.assertEqual(len(client.versions), 1)
+
     def test_recovery_does_not_roll_back_newer_version(self):
         client = FakeClient()
-        client.presets = [{"record_id": "preset-1", "fields": {"preset_key": "X", "current_version": [{"text": "X@v9"}]}}]
+        client.presets = [{
+            "record_id": "preset-1",
+            "fields": {
+                "preset_key": "X",
+                "current_version": [{"text": "X@v9"}],
+                "current_version_no_text": "v9",
+            },
+        }]
         client.versions = [
             {"record_id": "version-8", "fields": {"version_id": "X@v8", "version_no": 8, "source_submission": [{"record_ids": ["sub-rec"]}]}},
             {"record_id": "version-9", "fields": {"version_id": "X@v9", "version_no": 9}},
@@ -148,6 +182,7 @@ class SubmissionPublicationTests(unittest.TestCase):
         result = SubmissionPublisher(client).publish_submission("S1")
         self.assertEqual(result.version_id, "X@v8")
         self.assertEqual(client.presets[0]["fields"]["current_version"][0]["text"], "X@v9")
+        self.assertEqual(client.presets[0]["fields"]["current_version_no_text"], "v9")
 
     def test_stale_recovery_does_not_project_older_photos(self):
         client = FakeClient()
@@ -157,6 +192,7 @@ class SubmissionPublicationTests(unittest.TestCase):
                 "preset_key": "X",
                 "冷却参数照片": [{"file_token": "newer-photo"}],
                 "current_version": [{"text": "X@v9", "record_ids": ["version-9"]}],
+                "current_version_no_text": "v9",
             },
         }]
         client.versions = [
@@ -166,6 +202,7 @@ class SubmissionPublicationTests(unittest.TestCase):
         client.submission["fields"]["status"] = APPROVING
         SubmissionPublisher(client).publish_submission("S1")
         self.assertEqual(client.presets[0]["fields"]["冷却参数照片"], [{"file_token": "newer-photo"}])
+        self.assertEqual(client.presets[0]["fields"]["current_version_no_text"], "v9")
 
     def test_projection_failure_is_repaired_without_extra_version(self):
         client = FakeClient()

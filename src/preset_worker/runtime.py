@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .services.enrichment import FORMAL_ENRICHMENT_STATUS, SubmissionEnrichment, _lookup_text
+from .services.preview import PreviewService
 from .services.publication import SubmissionPublisher
 
 
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 # DRAFT is an engineer-owned editing state. Only an explicit formal
 # submission request makes a record eligible for background enrichment.
 ENRICHMENT_STATUS = FORMAL_ENRICHMENT_STATUS
+PREVIEW_STATUS = "PREVIEW_REQUESTED"
 PUBLICATION_STATUS = "APPROVING"
 
 
@@ -28,6 +30,7 @@ class WorkerRuntime:
         *,
         batch_size: int = 20,
         poll_interval: float = 10.0,
+        preview_service: Callable[[str], object] | None = None,
         enrichment_service: Callable[[str], object] | None = None,
         publication_service: Callable[[str], object] | None = None,
         stop_event: threading.Event | None = None,
@@ -39,6 +42,7 @@ class WorkerRuntime:
         self.client = client
         self.batch_size = batch_size
         self.poll_interval = poll_interval
+        self.preview_service = preview_service or PreviewService(client).preview_submission
         self.enrichment_service = enrichment_service or SubmissionEnrichment(client).enrich_submission
         self.publication_service = publication_service or SubmissionPublisher(client).publish_submission
         self.stop_event = stop_event or threading.Event()
@@ -49,16 +53,15 @@ class WorkerRuntime:
         value = _lookup_text(fields.get("submission_id"))
         return value or record.get("record_id") or record.get("id")
 
-    def _discover(self, status: str) -> list[dict[str, Any]]:
+    def _discover(self, status: str, *, action: str) -> list[dict[str, Any]]:
         try:
-            candidates = self.client.find_submission_candidates(
-                status,
-                limit=self.batch_size,
-            )
+            if action == "preview":
+                candidates = self.client.list_preview_candidates(limit=self.batch_size)
+            else:
+                candidates = self.client.find_submission_candidates(status, limit=self.batch_size)
         except Exception:
             logger.exception("candidate discovery failed status=%s", status)
             return []
-        action = "enrich" if status == ENRICHMENT_STATUS else "publish"
         for record in candidates:
             logger.info(
                 "candidate discovered submission=%s action=%s",
@@ -93,13 +96,19 @@ class WorkerRuntime:
 
     def run_once(self) -> None:
         """Process one bounded cycle; never sleeps or loops indefinitely."""
-        enrichment_candidates = self._discover(ENRICHMENT_STATUS)
+        preview_candidates = self._discover(PREVIEW_STATUS, action="preview")
+        self._dispatch(
+            preview_candidates,
+            action="preview",
+            service=self.preview_service,
+        )
+        enrichment_candidates = self._discover(ENRICHMENT_STATUS, action="enrich")
         self._dispatch(
             enrichment_candidates,
             action="enrich",
             service=self.enrichment_service,
         )
-        publication_candidates = self._discover(PUBLICATION_STATUS)
+        publication_candidates = self._discover(PUBLICATION_STATUS, action="publish")
         self._dispatch(
             publication_candidates,
             action="publish",

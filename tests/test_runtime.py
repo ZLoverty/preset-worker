@@ -1,12 +1,15 @@
 import threading
 import unittest
 
-from preset_worker.runtime import ENRICHMENT_STATUS, PUBLICATION_STATUS, WorkerRuntime
+from preset_worker.runtime import ENRICHMENT_STATUS, PREVIEW_STATUS, PUBLICATION_STATUS, WorkerRuntime
 
 
 class FakeRepository:
     def __init__(self):
         self.records = {
+            PREVIEW_STATUS: [
+                {"record_id": "preview-1", "fields": {"submission_id": "P1"}},
+            ],
             ENRICHMENT_STATUS: [
                 {"record_id": "r1", "fields": {"submission_id": "S1"}},
                 {"record_id": "r2", "fields": {"submission_id": "S2"}},
@@ -25,6 +28,10 @@ class FakeRepository:
         self.queries.append((status, limit))
         return self.records[status][:limit]
 
+    def list_preview_candidates(self, *, limit):
+        self.queries.append((PREVIEW_STATUS, limit))
+        return self.records[PREVIEW_STATUS][:limit]
+
 
 class RuntimeTests(unittest.TestCase):
     def test_run_once_dispatches_both_categories_in_order(self):
@@ -33,12 +40,13 @@ class RuntimeTests(unittest.TestCase):
         runtime = WorkerRuntime(
             repo,
             batch_size=2,
+            preview_service=lambda submission_id: calls.append(("preview", submission_id)),
             enrichment_service=lambda submission_id: calls.append(("enrich", submission_id)),
             publication_service=lambda submission_id: calls.append(("publish", submission_id)),
         )
         runtime.run_once()
-        self.assertEqual(calls, [("enrich", "S1"), ("enrich", "S2"), ("publish", "S4")])
-        self.assertEqual(repo.queries, [(ENRICHMENT_STATUS, 2), (PUBLICATION_STATUS, 2)])
+        self.assertEqual(calls, [("preview", "P1"), ("enrich", "S1"), ("enrich", "S2"), ("publish", "S4")])
+        self.assertEqual(repo.queries, [(PREVIEW_STATUS, 2), (ENRICHMENT_STATUS, 2), (PUBLICATION_STATUS, 2)])
 
     def test_failure_isolated_and_not_retried_in_same_cycle(self):
         repo = FakeRepository()
@@ -51,6 +59,7 @@ class RuntimeTests(unittest.TestCase):
 
         WorkerRuntime(
             repo,
+            preview_service=lambda _submission_id: None,
             batch_size=3,
             enrichment_service=enrich,
             publication_service=lambda _submission_id: None,
@@ -64,9 +73,10 @@ class RuntimeTests(unittest.TestCase):
             repo,
             enrichment_service=lambda submission_id: calls.append(("enrich", submission_id)),
             publication_service=lambda submission_id: calls.append(("publish", submission_id)),
+            preview_service=lambda submission_id: calls.append(("preview", submission_id)),
         ).run_once()
         self.assertNotIn(("enrich", "D1"), calls)
-        self.assertEqual(repo.queries, [(ENRICHMENT_STATUS, 20), (PUBLICATION_STATUS, 20)])
+        self.assertEqual(repo.queries, [(PREVIEW_STATUS, 20), (ENRICHMENT_STATUS, 20), (PUBLICATION_STATUS, 20)])
 
     def test_invalid_runtime_configuration(self):
         with self.assertRaises(ValueError):
@@ -81,6 +91,7 @@ class RuntimeTests(unittest.TestCase):
 
         runtime = WorkerRuntime(
             repo,
+            preview_service=lambda _submission_id: None,
             stop_event=stop,
             enrichment_service=lambda _submission_id: None,
             publication_service=lambda _submission_id: None,

@@ -195,6 +195,10 @@ class FeishuClient:
             filter_expression=expression,
         )
 
+    def list_preview_candidates(self, *, limit: int) -> list[dict[str, Any]]:
+        """Find explicit preview requests without loading inactive records."""
+        return self.find_submission_candidates("PREVIEW_REQUESTED", limit=limit)
+
     def get_submission(self, submission_id: str) -> dict[str, Any]:
         for record in self.list_records(self.submission_table_id):
             record_id = record.get("record_id") or record.get("id")
@@ -372,14 +376,27 @@ def _json_field(value: object, default: Any) -> Any:
 
 
 @dataclass
-class EnrichmentResult:
+class CandidateResult:
     operation: str
     preset_key: str
     base_version_id: str
+    base_version_record_id: str | None
     canonical_json: Any
     diff: dict[str, Any]
     validation: dict[str, Any]
+
+
+@dataclass
+class EnrichmentResult(CandidateResult):
     status: str
+
+
+class CandidateFailure(ValueError):
+    """A candidate is invalid feedback, rather than an infrastructure error."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
 
 
 class SubmissionEnrichment:
@@ -387,11 +404,13 @@ class SubmissionEnrichment:
         self.client = client
 
     def _find_preset(self, preset_key: str) -> dict[str, Any] | None:
-        return next(
-            (record for record in self.client.list_records(self.client.preset_table_id)
-             if _lookup_text(record.get("fields", {}).get("preset_key")) == preset_key),
-            None,
-        )
+        matches = [
+            record for record in self.client.list_records(self.client.preset_table_id)
+            if _lookup_text(record.get("fields", {}).get("preset_key")) == preset_key
+        ]
+        if len(matches) > 1:
+            raise CandidateFailure(f"preset_key 存在重复 Preset: {preset_key}")
+        return matches[0] if matches else None
 
     def _base_json(self, preset: dict[str, Any]) -> tuple[str, str | None, Any | None]:
         preset_fields = preset.get("fields", {})
@@ -399,7 +418,7 @@ class SubmissionEnrichment:
         if not base_version_id:
             base_version_id = _lookup_text(preset_fields.get("current_version"))
         if not base_version_id:
-            return "", None, None
+            raise CandidateFailure("匹配的 Preset 缺少 current_version")
         versions = self.client.list_records(self.client.version_table_id)
         version = next(
             (item for item in versions if _lookup_text(item.get("fields", {}).get("version_id")) == base_version_id),
@@ -423,21 +442,16 @@ class SubmissionEnrichment:
             operation=str(fields.get("operation", "")),
             preset_key=str(fields.get("preset_key", "")),
             base_version_id=str(fields.get("base_version_id", "")),
+            base_version_record_id=None,
             canonical_json={},
             diff=_json_field(fields.get("diff"), {}),
             validation=_json_field(fields.get("validation"), {}),
             status=str(fields.get("status", "READY_FOR_REVIEW")),
         )
 
-    def enrich_submission(self, submission_id: str) -> EnrichmentResult:
-        record = self.client.get_submission(submission_id)
+    def process_candidate(self, record: dict[str, Any], submission_id: str) -> CandidateResult:
+        """Compute a candidate without changing Submission or publication tables."""
         fields = record.get("fields", {})
-        if fields.get("status") == "READY_FOR_REVIEW":
-            return self._frozen_result(record)
-        if fields.get("status") != FORMAL_ENRICHMENT_STATUS:
-            raise RuntimeError(
-                f"Submission is {fields.get('status', 'unknown')} and is not eligible for formal enrichment."
-            )
         try:
             pi_code = _lookup_text(fields.get("pi_code"))
             printer = _lookup_text(fields.get("printer") or fields.get("machine"))
@@ -450,20 +464,20 @@ class SubmissionEnrichment:
             if not pm_method_version:
                 raise ValueError("Submission 缺少 pm_method_version（当前表字段为 method_version）")
         except ValueError as exc:
-            validation = {"valid": False, "errors": [str(exc)], "warnings": []}
-            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
-            raise ValidationFailure(validation) from exc
+            raise ValidationFailure({"valid": False, "errors": [str(exc)], "warnings": []}) from exc
+
         attachments = _preset_data_attachments(fields)
         if not attachments:
-            validation = {"valid": False, "errors": ["Submission 缺少 uploaded_json 附件"], "warnings": []}
-            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
-            raise ValidationFailure(validation)
+            raise ValidationFailure({"valid": False, "errors": ["Submission 缺少 uploaded_json 附件"], "warnings": []})
         try:
             uploaded = json.loads(self.client.download_attachment(attachments[0]).decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            validation = {"valid": False, "errors": [f"uploaded_json 不是有效 JSON: {exc}"], "warnings": []}
-            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
-            raise ValidationFailure(validation) from exc
+            raise ValidationFailure({
+                "valid": False,
+                "errors": [f"uploaded_json 不是有效 JSON: {exc}"],
+                "warnings": [],
+            }) from exc
+
         try:
             processor = processor_for(
                 slicer,
@@ -471,41 +485,77 @@ class SubmissionEnrichment:
                 printer=printer,
                 pm_method_version=pm_method_version,
             )
-        except UnsupportedSlicerError as exc:
-            validation = {"valid": False, "errors": [str(exc)], "warnings": []}
-            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
+        except UnsupportedSlicerError:
             raise
         validation = processor.validate(uploaded)
         if not validation["valid"]:
-            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
             raise ValidationFailure(validation)
+
         canonical = processor.canonicalize(uploaded)
         preset = self._find_preset(preset_key)
         operation = "UPDATE" if preset else "CREATE"
         base_version_id, base_version_record_id, base_json = self._base_json(preset) if preset else ("", None, None)
-        diff = calculate_diff(base_json, canonical)
-        canonical_bytes = json.dumps(canonical, ensure_ascii=False, indent=2).encode("utf-8")
-        file_token = None
+        return CandidateResult(
+            operation=operation,
+            preset_key=preset_key,
+            base_version_id=base_version_id,
+            base_version_record_id=base_version_record_id,
+            canonical_json=canonical,
+            diff=calculate_diff(base_json, canonical),
+            validation=validation,
+        )
+
+    def _canonical_attachment(self, record: dict[str, Any], submission_id: str, canonical: Any) -> str:
+        fields = record.get("fields", {})
         existing_canonical = _attachment_list(fields.get("canonical_json"))
         if existing_canonical:
             try:
                 existing = json.loads(self.client.download_attachment(existing_canonical[0]).decode("utf-8"))
                 if existing == canonical:
                     file_token = existing_canonical[0].get("file_token") or existing_canonical[0].get("token")
+                    if file_token:
+                        return file_token
             except (UnicodeDecodeError, json.JSONDecodeError):
                 pass
-        if not file_token:
-            canonical_name = str(canonical.get("name") or submission_id).strip()
-            uploaded_file = self.client.upload_attachment(f"{canonical_name}.json", canonical_bytes)
-            file_token = uploaded_file.get("file_token") or uploaded_file.get("token")
+        canonical_bytes = json.dumps(canonical, ensure_ascii=False, indent=2).encode("utf-8")
+        canonical_name = str(canonical.get("name") or submission_id).strip()
+        uploaded_file = self.client.upload_attachment(f"{canonical_name}.json", canonical_bytes)
+        file_token = uploaded_file.get("file_token") or uploaded_file.get("token")
         if not file_token:
             raise RuntimeError("上传 canonical_json 后没有返回 file_token")
-        result = EnrichmentResult(operation, preset_key, base_version_id, canonical, diff, validation, "READY_FOR_REVIEW")
+        return file_token
+
+    def enrich_submission(self, submission_id: str) -> EnrichmentResult:
+        record = self.client.get_submission(submission_id)
+        fields = record.get("fields", {})
+        if fields.get("status") == "READY_FOR_REVIEW":
+            return self._frozen_result(record)
+        if fields.get("status") != FORMAL_ENRICHMENT_STATUS:
+            raise RuntimeError(
+                f"Submission is {fields.get('status', 'unknown')} and is not eligible for formal enrichment."
+            )
+        try:
+            candidate = self.process_candidate(record, submission_id)
+        except ValidationFailure as exc:
+            self.client.update_submission(record["record_id"], {"validation": json.dumps(exc.validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
+            raise
+        except CandidateFailure as exc:
+            validation = {"valid": False, "errors": [str(exc)], "warnings": []}
+            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
+            raise ValidationFailure(validation) from exc
+        except UnsupportedSlicerError as exc:
+            validation = {"valid": False, "errors": [str(exc)], "warnings": []}
+            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
+            raise
+        file_token = self._canonical_attachment(record, submission_id, candidate.canonical_json)
+        result = EnrichmentResult(**candidate.__dict__, status="READY_FOR_REVIEW")
         self.client.update_submission(
             record["record_id"],
             {
                 "operation": result.operation,
-                "base_version_id": [base_version_record_id] if base_version_record_id else [],
+                "base_version_id": [candidate.base_version_record_id]
+                if candidate.base_version_record_id
+                else [],
                 "canonical_json": [{"file_token": file_token}],
                 "diff": json.dumps(result.diff, ensure_ascii=False),
                 "validation": json.dumps(result.validation, ensure_ascii=False),
