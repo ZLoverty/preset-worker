@@ -40,7 +40,11 @@ class FakeClient:
         return self.submission
 
     def list_records(self, table_id):
-        return {self.preset_table_id: self.presets, self.version_table_id: self.versions}[table_id]
+        return {
+            self.submission_table_id: [self.submission],
+            self.preset_table_id: self.presets,
+            self.version_table_id: self.versions,
+        }[table_id]
 
     def download_attachment(self, attachment):
         return self.files[attachment["file_token"]]
@@ -100,7 +104,7 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         }]
         client.versions = [{
             "record_id": "version-record-7",
-            "fields": {"version_id": "P42@v7", "canonical_json": [{"file_token": "base"}]},
+            "fields": {"version_id": "P42@v7", "version_no": 7, "canonical_json": [{"file_token": "base"}]},
         }]
         client.files["base"] = b'{"name":"old","version":"1","temperature":"220"}'
 
@@ -153,6 +157,7 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         result = SubmissionEnrichment(client).enrich_submission("S123")
         self.assertEqual(result.operation, "CREATE")
         self.assertEqual(result.base_version_id, "")
+        self.assertEqual(result.base_version_no_text, "")
         self.assertEqual(result.status, "READY_FOR_REVIEW")
         self.assertEqual(result.canonical_json["name"], "L2002CF @BBL P2S")
         self.assertEqual(result.canonical_json["pm_method_version"], "2.1")
@@ -169,13 +174,33 @@ class SubmissionEnrichmentTests(unittest.TestCase):
             "fields": {"preset_key": "L2002CF | BBL P2S | BambuStudio", "current_version_id": [{"text": "P42@v7"}]}
         }]
         client.versions = [{
-            "fields": {"version_id": "P42@v7", "canonical_json": [{"file_token": "base"}]}
+            "record_id": "version-record-7",
+            "fields": {"version_id": "P42@v7", "version_no": 7, "canonical_json": [{"file_token": "base"}]}
         }]
         client.files["base"] = b'{"name":"old","version":"1","temperature":"220"}'
         result = SubmissionEnrichment(client).enrich_submission("S123")
         self.assertEqual(result.operation, "UPDATE")
         self.assertEqual(result.base_version_id, "P42@v7")
+        self.assertEqual(result.base_version_no_text, "7")
         self.assertEqual(result.diff["modified"][0]["path"], "name")
+
+    def test_formal_enrichment_writes_base_pair_together(self):
+        client = FakeClient({"name": "new", "version": "1", "temperature": "220"})
+        client.presets = [{
+            "fields": {"preset_key": "L2002CF | BBL P2S | BambuStudio", "current_version_id": [{"text": "P42@v7"}]}
+        }]
+        client.versions = [{
+            "record_id": "version-record-7",
+            "fields": {"version_id": "P42@v7", "version_no": 7, "canonical_json": [{"file_token": "base"}]},
+        }]
+        client.files["base"] = b'{"name":"old","version":"1","temperature":"220"}'
+
+        SubmissionEnrichment(client).enrich_submission("S123")
+
+        update = client.updates[-1]
+        self.assertEqual(update["base_version_id"], ["version-record-7"])
+        self.assertEqual(update["base_version_no_text"], "7")
+        self.assertEqual(client.submission["fields"]["base_version_no_text"], "7")
 
     def test_invalid_json_updates_validation_only(self):
         client = FakeClient(b"not-json")
@@ -259,6 +284,29 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         result = SubmissionEnrichment(client).enrich_submission("S123")
         self.assertEqual(result.base_version_id, "P42@v7")
         self.assertFalse(client.updates)
+
+    def test_backfill_uses_linked_historical_version_only(self):
+        client = FakeClient({"name": "same", "version": "1"})
+        client.submission["fields"].update({
+            "status": "READY_FOR_REVIEW",
+            "operation": "UPDATE",
+            "base_version_id": [{"record_ids": ["version-record-7"]}],
+        })
+        client.presets = [{
+            "fields": {"preset_key": "L2002CF | BBL P2S | BambuStudio", "current_version_id": [{"text": "P42@v10"}]}
+        }]
+        client.versions = [{
+            "record_id": "version-record-7",
+            "fields": {"version_id": "P42@v7", "version_no": 7},
+        }, {
+            "record_id": "version-record-10",
+            "fields": {"version_id": "P42@v10", "version_no": 10},
+        }]
+
+        result = SubmissionEnrichment(client).backfill_base_version_no_text()
+
+        self.assertEqual(result["repaired"], 1)
+        self.assertEqual(client.updates, [{"base_version_no_text": "7"}])
 
 
 if __name__ == "__main__":

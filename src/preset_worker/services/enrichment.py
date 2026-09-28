@@ -31,6 +31,7 @@ VERSION_TABLE_ENV = "FEISHU_VERSION_TABLE_ID"
 PRESET_DATA_FIELD = "preset data"
 LEGACY_PRESET_DATA_FIELD = "uploaded_json"
 FORMAL_ENRICHMENT_STATUS = "VALIDATING"
+BASE_VERSION_NO_TEXT_FIELD = "base_version_no_text"
 
 
 def load_env(path: Path = Path(".env")) -> dict[str, str]:
@@ -285,6 +286,27 @@ def _lookup_text(value: object) -> str:
     return ""
 
 
+def _link_record_ids(value: object) -> list[str]:
+    """Extract record IDs from a Bitable SingleLink value."""
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if isinstance(value, list):
+        result: list[str] = []
+        for item in value:
+            result.extend(_link_record_ids(item))
+        return result
+    if isinstance(value, dict):
+        return [str(record_id) for record_id in value.get("record_ids", []) if record_id]
+    return []
+
+
+def _version_no(record: dict[str, Any]) -> str:
+    value = record.get("fields", {}).get("version_no")
+    if value in (None, "") or isinstance(value, bool):
+        raise RuntimeError("PresetVersion 缺少 version_no")
+    return str(value)
+
+
 def _submission_method_version(fields: dict[str, Any]) -> str:
     # The deployed table calls this field method_version.  Keep the logical
     # P2 name pm_method_version at the processor boundary.
@@ -381,6 +403,7 @@ class CandidateResult:
     preset_key: str
     base_version_id: str
     base_version_record_id: str | None
+    base_version_no_text: str
     canonical_json: Any
     diff: dict[str, Any]
     validation: dict[str, Any]
@@ -412,7 +435,7 @@ class SubmissionEnrichment:
             raise CandidateFailure(f"preset_key 存在重复 Preset: {preset_key}")
         return matches[0] if matches else None
 
-    def _base_json(self, preset: dict[str, Any]) -> tuple[str, str | None, Any | None]:
+    def _base_json(self, preset: dict[str, Any]) -> tuple[str, str | None, str, Any | None]:
         preset_fields = preset.get("fields", {})
         base_version_id = _lookup_text(preset_fields.get("current_version_id"))
         if not base_version_id:
@@ -426,11 +449,12 @@ class SubmissionEnrichment:
         )
         if not version:
             raise RuntimeError(f"找不到 base version: {base_version_id}")
+        base_version_no_text = _version_no(version)
         attachments = _attachment_list(version.get("fields", {}).get("canonical_json"))
         if not attachments:
             raise RuntimeError(f"base version 没有 canonical_json: {base_version_id}")
         try:
-            return base_version_id, version.get("record_id") or version.get("id"), json.loads(
+            return base_version_id, version.get("record_id") or version.get("id"), base_version_no_text, json.loads(
                 self.client.download_attachment(attachments[0]).decode("utf-8")
             )
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -443,6 +467,7 @@ class SubmissionEnrichment:
             preset_key=str(fields.get("preset_key", "")),
             base_version_id=str(fields.get("base_version_id", "")),
             base_version_record_id=None,
+            base_version_no_text=str(fields.get(BASE_VERSION_NO_TEXT_FIELD, "")),
             canonical_json={},
             diff=_json_field(fields.get("diff"), {}),
             validation=_json_field(fields.get("validation"), {}),
@@ -494,12 +519,15 @@ class SubmissionEnrichment:
         canonical = processor.canonicalize(uploaded)
         preset = self._find_preset(preset_key)
         operation = "UPDATE" if preset else "CREATE"
-        base_version_id, base_version_record_id, base_json = self._base_json(preset) if preset else ("", None, None)
+        base_version_id, base_version_record_id, base_version_no_text, base_json = (
+            self._base_json(preset) if preset else ("", None, "", None)
+        )
         return CandidateResult(
             operation=operation,
             preset_key=preset_key,
             base_version_id=base_version_id,
             base_version_record_id=base_version_record_id,
+            base_version_no_text=base_version_no_text,
             canonical_json=canonical,
             diff=calculate_diff(base_json, canonical),
             validation=validation,
@@ -556,6 +584,7 @@ class SubmissionEnrichment:
                 "base_version_id": [candidate.base_version_record_id]
                 if candidate.base_version_record_id
                 else [],
+                BASE_VERSION_NO_TEXT_FIELD: candidate.base_version_no_text,
                 "canonical_json": [{"file_token": file_token}],
                 "diff": json.dumps(result.diff, ensure_ascii=False),
                 "validation": json.dumps(result.validation, ensure_ascii=False),
@@ -563,6 +592,39 @@ class SubmissionEnrichment:
             },
         )
         return result
+
+    def backfill_base_version_no_text(self, *, limit: int | None = None) -> dict[str, int]:
+        """Repair historical UPDATE submissions from their linked base version.
+
+        This deliberately never consults Preset.current_version and only sends
+        the derived text field in each update request.
+        """
+        records = self.client.list_records(self.client.submission_table_id)
+        scanned = repaired = skipped = 0
+        versions = self.client.list_records(self.client.version_table_id)
+        for record in records:
+            if limit is not None and repaired >= limit:
+                break
+            scanned += 1
+            fields = record.get("fields", {})
+            base_value = fields.get("base_version_id") or fields.get("base_version")
+            if not _link_record_ids(base_value) or _lookup_text(fields.get(BASE_VERSION_NO_TEXT_FIELD)):
+                skipped += 1
+                continue
+            linked_ids = set(_link_record_ids(base_value))
+            version = next(
+                (
+                    item for item in versions
+                    if str(item.get("record_id") or item.get("id") or "") in linked_ids
+                ),
+                None,
+            )
+            if version is None:
+                raise RuntimeError(f"Submission {record.get('record_id', '')} 的 base_version 关联记录不存在")
+            value = _version_no(version)
+            self.client.update_submission(record["record_id"], {BASE_VERSION_NO_TEXT_FIELD: value})
+            repaired += 1
+        return {"scanned": scanned, "repaired": repaired, "skipped": skipped}
 
 
 class ValidationFailure(ValueError):

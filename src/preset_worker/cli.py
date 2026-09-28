@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Callable
 
+from .services.enrichment import SubmissionEnrichment
 from .services.enrichment_api import enrich_submission
 from .services.publication_api import publish_submission
 from .config import build_feishu_client, load_runtime_config
@@ -32,6 +33,11 @@ def main(
     commands = parser.add_subparsers(dest="command", required=True)
     enrich_parser = commands.add_parser("enrich", help="enrich one Submission")
     enrich_parser.add_argument("submission_id")
+    backfill_parser = commands.add_parser(
+        "backfill-base-version-no-text",
+        help="repair historical Submission base version display snapshots",
+    )
+    backfill_parser.add_argument("--limit", type=int, help="最多修复多少条")
     publish_parser = commands.add_parser("publish", help="publish one APPROVING Submission")
     publish_parser.add_argument("submission_id")
     commands.add_parser("run", help="run the polling Worker")
@@ -43,6 +49,11 @@ def main(
             service = enrich_service or (lambda submission_id: enrich_submission(submission_id, env_path=args.env))
             result = service(args.submission_id)
             print(json.dumps(_result_dict(result), ensure_ascii=False, indent=2, default=str))
+            return 0
+        elif args.command == "backfill-base-version-no-text":
+            client = build_feishu_client(args.env)
+            result = SubmissionEnrichment(client).backfill_base_version_no_text(limit=args.limit)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         elif args.command == "publish":
             service = publish_service or (lambda submission_id: publish_submission(submission_id, env_path=args.env))
