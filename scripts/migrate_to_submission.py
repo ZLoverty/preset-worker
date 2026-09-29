@@ -61,6 +61,27 @@ PRINTER_VALUE_MAP = {
     "Anycubic S1": "Anycubic Kobra S1",
     "Anycubic KX": "Anycubic Kobra X",
 }
+# Latest versions observed in the legacy preset-data audit.  These are
+# intentionally keyed by printer: the legacy table does not expose a
+# reliable slicer-software field, while printer names identify the preset
+# ecosystem used by each uploaded package.
+PRESET_LATEST_VERSION = {
+    "Bambu A1": "2.7.0.9",
+    "Bambu A2L": "2.7.0.9",
+    "Bambu H2C": "2.8.0.6",
+    "Bambu H2D": "2.8.0.4",
+    "Bambu H2S": "2.7.0.9",
+    "Bambu P1S": "2.7.0.8",
+    "Bambu P2S": "2.8.0.4",
+    "Bambu X2D": "2.8.0.6",
+    "Anycubic S1": "2.4.0.2",
+    "Creality I7": "26.8.29.19",
+    "Creality K2 Pro": "26.8.29.19",
+    "Elegoo CC2": "1.5.2.2",
+    "QIDI Q2": "2.3.2.60",
+    "Snapmaker U1": "2.3.2.60",
+}
+INVALID_PRESET_VERSION = "0.0.0.0"
 PHOTO_FIELDS = (
     "冷却参数照片",
     "温度塔照片",
@@ -112,6 +133,57 @@ def _attachment_value(value: Any) -> list[dict[str, Any]]:
     return copy.deepcopy([item for item in value if isinstance(item, dict)])
 
 
+def _text_values(value: Any) -> list[str]:
+    """Extract comparable text from Bitable text/link cell shapes."""
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return [str(value)]
+    if isinstance(value, list):
+        result: list[str] = []
+        for item in value:
+            result.extend(_text_values(item))
+        return result
+    if isinstance(value, dict):
+        result: list[str] = []
+        for key in ("text", "name", "value"):
+            if value.get(key) not in (None, ""):
+                result.extend(_text_values(value[key]))
+        return result
+    return []
+
+
+def replace_invalid_preset_version(
+    content: bytes,
+    filename: str,
+    printer: Any,
+) -> tuple[bytes, str | None]:
+    """Replace an invalid preset version using the audited printer mapping.
+
+    Non-JSON attachments and JSON files without the exact invalid marker are
+    returned byte-for-byte unchanged.  An unknown printer is also left
+    unchanged so a migration cannot silently assign an invented version.
+    """
+    try:
+        data = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return content, None
+    if not isinstance(data, dict) or data.get("version") != INVALID_PRESET_VERSION:
+        return content, None
+    printer_names = _text_values(printer)
+    replacement = next(
+        (PRESET_LATEST_VERSION.get(name) for name in printer_names if name in PRESET_LATEST_VERSION),
+        None,
+    )
+    if replacement is None:
+        return content, None
+    data["version"] = replacement
+    return (
+        json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+        replacement,
+    )
+
+
 def upload_attachment_fields(
     api: BitableApi,
     source_fields: dict[str, Any],
@@ -119,6 +191,7 @@ def upload_attachment_fields(
 ) -> dict[str, list[dict[str, str]]]:
     """Download source attachments and return values with new tokens."""
     result: dict[str, list[dict[str, str]]] = {}
+    printer = _first_present(source_fields, SOURCE_PRINTER_FIELDS)
     for source_field, target_field in ATTACHMENT_MAPPINGS:
         attachments = _attachment_value(source_fields.get(source_field))
         if not attachments:
@@ -130,6 +203,15 @@ def upload_attachment_fields(
             filename = str(attachment.get("name") or f"{source_field}-{index}.bin")
             print(f"    附件 {source_field} -> {target_field}/{filename}: 下载")
             content = api.download_attachment(attachment)
+            if target_field == "preset data":
+                content, replacement = replace_invalid_preset_version(
+                    content, filename, printer
+                )
+                if replacement is not None:
+                    print(
+                        f"    附件 {source_field} -> {target_field}/{filename}: "
+                        f"version {INVALID_PRESET_VERSION} -> {replacement}"
+                    )
             print(f"    附件 {source_field} -> {target_field}/{filename}: 上传 ({len(content) / 1024:.0f}KB)")
             token = api.upload_attachment(target_app, filename, content)
             uploaded.append({"file_token": token})

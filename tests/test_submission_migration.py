@@ -1,9 +1,11 @@
+import json
 import unittest
 
 from scripts.migrate_to_submission import (
     PHOTO_FIELDS,
     build_target_fields,
     migration_id,
+    replace_invalid_preset_version,
 )
 
 
@@ -51,6 +53,46 @@ class SubmissionMigrationTests(unittest.TestCase):
     def test_photo_field_list_matches_current_projection_schema(self):
         self.assertEqual(len(PHOTO_FIELDS), 10)
         self.assertIn("其他照片", PHOTO_FIELDS)
+
+    def test_replaces_invalid_version_for_known_printer(self):
+        content = b'{"name":"preset","version":"0.0.0.0","x":"keep"}'
+        updated, replacement = replace_invalid_preset_version(
+            content, "preset.json", "Bambu P2S"
+        )
+        self.assertEqual(replacement, "2.8.0.4")
+        self.assertEqual(json.loads(updated), {
+            "name": "preset",
+            "version": "2.8.0.4",
+            "x": "keep",
+        })
+
+    def test_replaces_invalid_version_for_non_bambu_printer(self):
+        content = b'{"version":"0.0.0.0"}'
+        updated, replacement = replace_invalid_preset_version(
+            content, "preset.json", "Elegoo CC2"
+        )
+        self.assertEqual(replacement, "1.5.2.2")
+        self.assertEqual(json.loads(updated)["version"], "1.5.2.2")
+
+    def test_leaves_unknown_or_non_json_attachments_unchanged(self):
+        invalid = b'{"version":"0.0.0.0"}'
+        self.assertEqual(
+            replace_invalid_preset_version(invalid, "preset.json", "Unknown")[0],
+            invalid,
+        )
+        binary = b'not-json\x00\x01'
+        self.assertEqual(
+            replace_invalid_preset_version(binary, "preset.3mf", "Bambu P2S")[0],
+            binary,
+        )
+
+    def test_does_not_change_missing_or_valid_version(self):
+        for content in (b'{"name":"no-version"}', b'{"version":"2.8.0.4"}'):
+            updated, replacement = replace_invalid_preset_version(
+                content, "preset.json", "Bambu P2S"
+            )
+            self.assertEqual(updated, content)
+            self.assertIsNone(replacement)
 
 
 if __name__ == "__main__":
