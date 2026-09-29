@@ -4,6 +4,7 @@ import unittest
 from scripts.migrate_to_submission import (
     PHOTO_FIELDS,
     build_target_fields,
+    infer_slicer,
     migration_id,
     replace_invalid_preset_version,
 )
@@ -50,6 +51,23 @@ class SubmissionMigrationTests(unittest.TestCase):
     def test_existing_submission_id_is_reused(self):
         self.assertEqual(migration_id("rec-1", {"submission_id": "S000010"}), "S000010")
 
+    def test_infers_slicer_from_legacy_printer(self):
+        self.assertEqual(infer_slicer("Bambu P2S"), "BambuStudio")
+        self.assertEqual(infer_slicer("Creality K2 Pro"), "CrealityPrint")
+        self.assertEqual(infer_slicer("Elegoo CC2"), "ElegooSlicer")
+        self.assertEqual(infer_slicer("Prusa core one"), "PrusaSlicer")
+        self.assertEqual(infer_slicer("QIDI Q2"), "OrcaSlicer")
+        self.assertIsNone(infer_slicer("Unknown printer"))
+
+    def test_copies_submitter_and_created_at(self):
+        source = {
+            "开发人": [{"id": "user-1"}],
+            "完成日期": 1760000000000,
+        }
+        fields = build_target_fields("rec-1", source)
+        self.assertEqual(fields["submitter"], [{"id": "user-1"}])
+        self.assertEqual(fields["created_at"], 1760000000000)
+
     def test_photo_field_list_matches_current_projection_schema(self):
         self.assertEqual(len(PHOTO_FIELDS), 10)
         self.assertIn("其他照片", PHOTO_FIELDS)
@@ -60,6 +78,8 @@ class SubmissionMigrationTests(unittest.TestCase):
             content, "preset.json", "Bambu P2S"
         )
         self.assertEqual(replacement, "2.8.0.4")
+        self.assertIn(b"\n    \"version\"", updated)
+        self.assertTrue(updated.endswith(b"\n"))
         self.assertEqual(json.loads(updated), {
             "name": "preset",
             "version": "2.8.0.4",

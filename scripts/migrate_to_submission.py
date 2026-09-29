@@ -48,6 +48,8 @@ TARGET_TABLE_ENV = "FEISHU_SUBMISSION_TABLE_ID"
 SOURCE_PI_FIELDS = ("pi_code", "PI code", "PI Code")
 SOURCE_PRINTER_FIELDS = ("printer", "Printer")
 SOURCE_PROFILE_FIELDS = ("preset data", "preset_data")
+SOURCE_SUBMITTER_FIELDS = ("submitter", "开发人")
+SOURCE_CREATED_AT_FIELDS = ("created_at", "完成日期")
 PRINTER_VALUE_MAP = {
     "Bambu P2S": "BBL P2S",
     "Bambu A1": "BBL A1",
@@ -82,6 +84,11 @@ PRESET_LATEST_VERSION = {
     "Snapmaker U1": "2.3.2.60",
 }
 INVALID_PRESET_VERSION = "0.0.0.0"
+SLICER_REF_FIELDS = {
+    "pi_code": "pi_code_ref_text",
+    "printer": "printer_ref_text",
+    "slicer": "slicer_ref_text",
+}
 PHOTO_FIELDS = (
     "冷却参数照片",
     "温度塔照片",
@@ -153,6 +160,23 @@ def _text_values(value: Any) -> list[str]:
     return []
 
 
+def infer_slicer(printer: Any) -> str | None:
+    """Infer the target slicer relation from the legacy printer label."""
+    names = _text_values(printer)
+    for name in names:
+        if name.startswith("Bambu"):
+            return "BambuStudio"
+        if name.startswith("Creality"):
+            return "CrealityPrint"
+        if name.startswith("Elegoo"):
+            return "ElegooSlicer"
+        if name.startswith("Prusa"):
+            return "PrusaSlicer"
+        if name.startswith(("Anycubic", "QIDI", "Snapmaker")):
+            return "OrcaSlicer"
+    return None
+
+
 def replace_invalid_preset_version(
     content: bytes,
     filename: str,
@@ -179,7 +203,7 @@ def replace_invalid_preset_version(
         return content, None
     data["version"] = replacement
     return (
-        json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+        (json.dumps(data, ensure_ascii=False, indent=4) + "\n").encode("utf-8"),
         replacement,
     )
 
@@ -239,6 +263,12 @@ def build_target_fields(record_id: str, source_fields: dict[str, Any]) -> dict[s
         result[TARGET_PI_FIELD] = copy.deepcopy(pi_code)
     if printer is not None:
         result[TARGET_PRINTER_FIELD] = copy.deepcopy(printer)
+    submitter = _first_present(source_fields, SOURCE_SUBMITTER_FIELDS)
+    if submitter is not None:
+        result["submitter"] = copy.deepcopy(submitter)
+    created_at = _first_present(source_fields, SOURCE_CREATED_AT_FIELDS)
+    if created_at is not None:
+        result["created_at"] = copy.deepcopy(created_at)
     for source_field, target_field in ATTACHMENT_MAPPINGS:
         if source_field in source_fields:
             result[target_field] = _attachment_value(source_fields[source_field])
@@ -267,6 +297,7 @@ class BitableApi:
         self.parent_nodes: dict[str, str] = {}
         self.link_table_ids: dict[tuple[str, str], str] = {}
         self.link_records: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        self.primary_field_names: dict[tuple[str, str], str] = {}
 
     def target_parent_node(self, app_token: str) -> str:
         if app_token not in self.parent_nodes:
@@ -363,6 +394,24 @@ class BitableApi:
             self.link_table_ids[key] = str(linked_table)
         return self.link_table_ids[key]
 
+    def linked_table_primary_field(self, app_token: str, table_id: str) -> str:
+        key = (app_token, table_id)
+        if key not in self.primary_field_names:
+            url = f"{BITABLE_API}/apps/{app_token}/tables/{table_id}/fields?page_size=100"
+            items = _api_json(url, self.token).get("data", {}).get("items", [])
+            primary = next((item for item in items if item.get("is_primary")), None)
+            field_name = (primary or {}).get("field_name")
+            if not field_name:
+                raise MigrationError(f"关联表 {table_id} 找不到主字段")
+            self.primary_field_names[key] = str(field_name)
+        return self.primary_field_names[key]
+
+    def _linked_records(self, app_token: str, table_id: str) -> list[dict[str, Any]]:
+        cache_key = (app_token, table_id)
+        if cache_key not in self.link_records:
+            self.link_records[cache_key] = self.list_records(app_token, table_id)
+        return self.link_records[cache_key]
+
     @staticmethod
     def _text_values(value: Any) -> list[str]:
         if isinstance(value, str):
@@ -390,41 +439,65 @@ class BitableApi:
         source_value: Any,
     ) -> list[str]:
         """Resolve legacy text/link values to target SingleLink record IDs."""
+        ids, _display = self.resolve_link_value_and_text(
+            app_token, target_table, field_name, source_value
+        )
+        return ids
+
+    def resolve_link_value_and_text(
+        self,
+        app_token: str,
+        target_table: str,
+        field_name: str,
+        source_value: Any,
+    ) -> tuple[list[str], str]:
+        """Resolve a SingleLink and return its exact primary-field display text."""
+        linked_table = self.linked_table_id(app_token, target_table, field_name)
+        linked_records = self._linked_records(app_token, linked_table)
+        primary_field = self.linked_table_primary_field(app_token, linked_table)
+        source_ids: list[str] = []
         if isinstance(source_value, list):
-            existing_ids = [
-                str(item)
-                for item in source_value
-                if isinstance(item, str)
+            source_ids = [
+                str(item) for item in source_value if isinstance(item, str)
             ]
-            existing_ids.extend(
+            source_ids.extend(
                 str(record_id)
                 for item in source_value
                 if isinstance(item, dict)
                 for record_id in item.get("record_ids", [])
                 if record_id
             )
-            if existing_ids:
-                return existing_ids
-        wanted = self._text_values(source_value)
-        if not wanted:
-            return []
+        if source_ids:
+            matched = next(
+                (
+                    record
+                    for record in linked_records
+                    if str(record.get("record_id") or record.get("id")) in source_ids
+                ),
+                None,
+            )
+            if matched is not None:
+                record_id = matched.get("record_id") or matched.get("id")
+                display = _text_values((matched.get("fields") or {}).get(primary_field))
+                if record_id and display:
+                    return [str(record_id)], display[0]
+        wanted = _text_values(source_value)
         if field_name == TARGET_PRINTER_FIELD:
             wanted = [PRINTER_VALUE_MAP.get(value, value) for value in wanted]
+        if not wanted:
+            return [], ""
         wanted_set = {value.casefold() for value in wanted}
-        linked_table = self.linked_table_id(app_token, target_table, field_name)
-        cache_key = (app_token, linked_table)
-        if cache_key not in self.link_records:
-            self.link_records[cache_key] = self.list_records(app_token, linked_table)
-        for record in self.link_records[cache_key]:
+        for record in linked_records:
             values = {
                 text.casefold()
                 for value in (record.get("fields", {}) or {}).values()
-                for text in self._text_values(value)
+                for text in _text_values(value)
             }
             if wanted_set & values:
                 record_id = record.get("record_id") or record.get("id")
-                if record_id:
-                    return [str(record_id)]
+                display = _text_values((record.get("fields") or {}).get(primary_field))
+                if record_id and display:
+                    return [str(record_id)], display[0]
         raise MigrationError(
             f"目标关联字段 {field_name} 找不到源值: {', '.join(wanted)}"
         )
@@ -503,19 +576,31 @@ def main(argv: list[str] | None = None) -> int:
             record_id = str(record.get("record_id") or "")
             source_fields = record.get("fields", {})
             fields = build_target_fields(record_id, source_fields)
+            inferred_slicer = infer_slicer(
+                _first_present(source_fields, SOURCE_PRINTER_FIELDS)
+            )
+            if inferred_slicer is not None:
+                fields["slicer"] = inferred_slicer
             if TARGET_PI_FIELD in fields:
-                fields[TARGET_PI_FIELD] = api.resolve_link_value(
+                fields[TARGET_PI_FIELD], fields[SLICER_REF_FIELDS[TARGET_PI_FIELD]] = api.resolve_link_value_and_text(
                     target_app,
                     target_table,
                     TARGET_PI_FIELD,
                     fields[TARGET_PI_FIELD],
                 )
             if TARGET_PRINTER_FIELD in fields:
-                fields[TARGET_PRINTER_FIELD] = api.resolve_link_value(
+                fields[TARGET_PRINTER_FIELD], fields[SLICER_REF_FIELDS[TARGET_PRINTER_FIELD]] = api.resolve_link_value_and_text(
                     target_app,
                     target_table,
                     TARGET_PRINTER_FIELD,
                     fields[TARGET_PRINTER_FIELD],
+                )
+            if "slicer" in fields:
+                fields["slicer"], fields[SLICER_REF_FIELDS["slicer"]] = api.resolve_link_value_and_text(
+                    target_app,
+                    target_table,
+                    "slicer",
+                    fields["slicer"],
                 )
             submission_id = fields[TARGET_SUBMISSION_ID_FIELD]
             if submission_id in existing:
