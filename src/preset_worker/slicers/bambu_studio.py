@@ -7,13 +7,21 @@ import json
 from typing import Any
 
 from .contracts import (
+    Artifact,
+    InvalidArtifactError,
     ProcessedArtifact,
     ProcessingContext,
     SlicerProcessor,
     ValidationResult,
     ValidationStatus,
-    parse_json_artifact,
 )
+
+
+def parse_json_artifact(artifact: bytes) -> Any:
+    try:
+        return json.loads(artifact.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise InvalidArtifactError(f"uploaded_json 不是有效 JSON: {exc}") from exc
 
 
 def _flatten(value: Any, path: str = "") -> dict[str, Any]:
@@ -44,8 +52,8 @@ def _calculate_diff(old: Any | None, new: Any) -> dict[str, list[dict[str, Any]]
 class BambuStudioProcessor(SlicerProcessor):
     slicer_id = "BambuStudio"
 
-    def parse(self, artifact: bytes, context: ProcessingContext) -> Any:
-        return parse_json_artifact(artifact)
+    def parse(self, artifact: Artifact, context: ProcessingContext) -> Any:
+        return parse_json_artifact(artifact.content)
 
     def validate_source(self, source: Any, context: ProcessingContext) -> ValidationResult:
         errors: list[str] = []
@@ -69,25 +77,29 @@ class BambuStudioProcessor(SlicerProcessor):
     def validate_canonical(self, canonical: Any, context: ProcessingContext) -> ValidationResult:
         return self.validate_source(canonical, context)
 
-    def serialize(self, canonical: Any, context: ProcessingContext) -> bytes:
-        return json.dumps(canonical, ensure_ascii=False, indent=2).encode("utf-8")
+    def serialize(self, canonical: Any, context: ProcessingContext) -> Artifact:
+        return Artifact(
+            content=json.dumps(canonical, ensure_ascii=False, indent=2).encode("utf-8"),
+            filename=f"{context.pi_code} @{context.printer}.json",
+            media_type="application/json",
+        )
 
-    def diff(self, base_artifact: bytes | None, candidate_artifact: bytes, context: ProcessingContext) -> dict[str, list[dict[str, Any]]]:
-        base = parse_json_artifact(base_artifact) if base_artifact is not None else None
-        candidate = parse_json_artifact(candidate_artifact)
+    def diff(self, base_artifact: Artifact | None, candidate_artifact: Artifact, context: ProcessingContext) -> dict[str, list[dict[str, Any]]]:
+        base = parse_json_artifact(base_artifact.content) if base_artifact is not None else None
+        candidate = parse_json_artifact(candidate_artifact.content)
         return _calculate_diff(base, candidate)
 
-    def process(self, artifact: bytes, context: ProcessingContext) -> ProcessedArtifact:
+    def process(self, artifact: Artifact, context: ProcessingContext) -> ProcessedArtifact:
         source = self.parse(artifact, context)
         validation = self.validate_source(source, context)
         if not validation.valid:
-            return ProcessedArtifact(b"", validation, source)
+            return ProcessedArtifact(Artifact(b"", "", None), validation)
         normalized = self.normalize(source, context)
         canonical = self.apply_company_policy(normalized, context)
         validation = self.validate_canonical(canonical, context)
         if not validation.valid:
-            return ProcessedArtifact(b"", validation, source)
-        return ProcessedArtifact(self.serialize(canonical, context), validation, source)
+            return ProcessedArtifact(Artifact(b"", "", None), validation)
+        return ProcessedArtifact(self.serialize(canonical, context), validation)
 
 
 def calculate_diff(old: Any | None, new: Any) -> dict[str, list[dict[str, Any]]]:

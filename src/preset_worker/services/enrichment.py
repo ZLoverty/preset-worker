@@ -18,7 +18,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from ..slicers import BambuStudioProcessor, ProcessingContext, SlicerProcessorRegistry, process_artifact
+from ..slicers import Artifact, ProcessingContext, SlicerProcessorRegistry, process_artifact
+from ..slicers.registry import default_processor_registry
 from ..slicers.bambu_studio import calculate_diff
 from ..slicers.contracts import UnsupportedSlicerError
 
@@ -333,7 +334,7 @@ class CandidateResult:
     base_version_id: str
     base_version_record_id: str | None
     base_version_no_text: str
-    canonical_json: Any
+    canonical_artifact: Artifact
     diff: dict[str, Any]
     validation: dict[str, Any]
 
@@ -354,7 +355,7 @@ class CandidateFailure(ValueError):
 class SubmissionEnrichment:
     def __init__(self, client: FeishuClient, *, processor_registry: SlicerProcessorRegistry | None = None):
         self.client = client
-        self.processor_registry = processor_registry or SlicerProcessorRegistry([BambuStudioProcessor()])
+        self.processor_registry = processor_registry or default_processor_registry()
 
     def _find_preset(self, preset_key: str) -> dict[str, Any] | None:
         matches = [
@@ -365,7 +366,7 @@ class SubmissionEnrichment:
             raise CandidateFailure(f"preset_key 存在重复 Preset: {preset_key}")
         return matches[0] if matches else None
 
-    def _base_json(self, preset: dict[str, Any]) -> tuple[str, str | None, str, Any | None]:
+    def _base_artifact(self, preset: dict[str, Any]) -> tuple[str, str | None, str, Artifact]:
         preset_fields = preset.get("fields", {})
         base_version_id = _lookup_text(preset_fields.get("current_version_id"))
         if not base_version_id:
@@ -383,12 +384,15 @@ class SubmissionEnrichment:
         attachments = _attachment_list(version.get("fields", {}).get("canonical_json"))
         if not attachments:
             raise RuntimeError(f"base version 没有 canonical_json: {base_version_id}")
-        try:
-            return base_version_id, version.get("record_id") or version.get("id"), base_version_no_text, json.loads(
-                self.client.download_attachment(attachments[0]).decode("utf-8")
-            )
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"base version canonical_json 无法解析: {base_version_id}") from exc
+        attachment = attachments[0]
+        content = self.client.download_attachment(attachment)
+        filename = str(attachment.get("name") or attachment.get("file_name") or f"{base_version_id}.artifact")
+        media_type = attachment.get("type") or attachment.get("mime_type")
+        return base_version_id, version.get("record_id") or version.get("id"), base_version_no_text, Artifact(
+            content=content,
+            filename=filename,
+            media_type=media_type,
+        )
 
     def _frozen_result(self, record: dict[str, Any]) -> EnrichmentResult:
         fields = record.get("fields", {})
@@ -398,7 +402,7 @@ class SubmissionEnrichment:
             base_version_id=str(fields.get("base_version_id", "")),
             base_version_record_id=None,
             base_version_no_text=str(fields.get(BASE_VERSION_NO_TEXT_FIELD, "")),
-            canonical_json={},
+            canonical_artifact=Artifact(b"", "", None),
             diff=_json_field(fields.get("diff"), {}),
             validation=_json_field(fields.get("validation"), {}),
             status=str(fields.get("status", "READY_FOR_REVIEW")),
@@ -424,7 +428,12 @@ class SubmissionEnrichment:
         attachments = _preset_data_attachments(fields)
         if not attachments:
             raise ValidationFailure({"valid": False, "errors": ["Submission 缺少 uploaded_json 附件"], "warnings": []})
-        artifact = self.client.download_attachment(attachments[0])
+        uploaded_attachment = attachments[0]
+        artifact = Artifact(
+            content=self.client.download_attachment(uploaded_attachment),
+            filename=str(uploaded_attachment.get("name") or uploaded_attachment.get("file_name") or f"{submission_id}.artifact"),
+            media_type=uploaded_attachment.get("type") or uploaded_attachment.get("mime_type"),
+        )
         processor = self.processor_registry.get(slicer)
         if processor is None:
             # Keep the historical exception/API while making the failure
@@ -446,11 +455,10 @@ class SubmissionEnrichment:
         validation = processed.validation_result.as_dict()
         if not processed.validation_result.valid:
             raise ValidationFailure(validation)
-        canonical = json.loads(processed.canonical_artifact.decode("utf-8"))
         preset = self._find_preset(preset_key)
         operation = "UPDATE" if preset else "CREATE"
-        base_version_id, base_version_record_id, base_version_no_text, base_json = (
-            self._base_json(preset) if preset else ("", None, "", None)
+        base_version_id, base_version_record_id, base_version_no_text, base_artifact = (
+            self._base_artifact(preset) if preset else ("", None, "", None)
         )
         return CandidateResult(
             operation=operation,
@@ -458,30 +466,26 @@ class SubmissionEnrichment:
             base_version_id=base_version_id,
             base_version_record_id=base_version_record_id,
             base_version_no_text=base_version_no_text,
-            canonical_json=canonical,
+            canonical_artifact=processed.canonical_artifact,
             diff=processor.diff(
-                json.dumps(base_json, ensure_ascii=False).encode("utf-8") if base_json is not None else None,
+                base_artifact,
                 processed.canonical_artifact,
                 context,
             ),
             validation=validation,
         )
 
-    def _canonical_attachment(self, record: dict[str, Any], submission_id: str, canonical: Any) -> str:
+    def _canonical_attachment(self, record: dict[str, Any], submission_id: str, canonical_artifact: Artifact) -> str:
         fields = record.get("fields", {})
         existing_canonical = _attachment_list(fields.get("canonical_json"))
         if existing_canonical:
-            try:
-                existing = json.loads(self.client.download_attachment(existing_canonical[0]).decode("utf-8"))
-                if existing == canonical:
-                    file_token = existing_canonical[0].get("file_token") or existing_canonical[0].get("token")
-                    if file_token:
-                        return file_token
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                pass
-        canonical_bytes = json.dumps(canonical, ensure_ascii=False, indent=2).encode("utf-8")
-        canonical_name = str(canonical.get("name") or submission_id).strip()
-        uploaded_file = self.client.upload_attachment(f"{canonical_name}.json", canonical_bytes)
+            existing = self.client.download_attachment(existing_canonical[0])
+            if existing == canonical_artifact.content:
+                file_token = existing_canonical[0].get("file_token") or existing_canonical[0].get("token")
+                if file_token:
+                    return file_token
+        filename = canonical_artifact.filename or f"{submission_id}.artifact"
+        uploaded_file = self.client.upload_attachment(filename, canonical_artifact.content)
         file_token = uploaded_file.get("file_token") or uploaded_file.get("token")
         if not file_token:
             raise RuntimeError("上传 canonical_json 后没有返回 file_token")
@@ -509,7 +513,7 @@ class SubmissionEnrichment:
             validation = {"valid": False, "errors": [str(exc)], "warnings": []}
             self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
             raise
-        file_token = self._canonical_attachment(record, submission_id, candidate.canonical_json)
+        file_token = self._canonical_attachment(record, submission_id, candidate.canonical_artifact)
         result = EnrichmentResult(**candidate.__dict__, status="READY_FOR_REVIEW")
         self.client.update_submission(
             record["record_id"],
@@ -582,8 +586,18 @@ def main() -> int:
     except (LookupError, RuntimeError, ValueError) as exc:
         print(f"错误: {exc}", file=__import__("sys").stderr)
         return 1
-    print(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
+    print(json.dumps(result.__dict__, ensure_ascii=False, indent=2, default=_json_default))
     return 0
+
+
+def _json_default(value: object) -> object:
+    if isinstance(value, Artifact):
+        return {
+            "filename": value.filename,
+            "media_type": value.media_type,
+            "size": len(value.content),
+        }
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 if __name__ == "__main__":

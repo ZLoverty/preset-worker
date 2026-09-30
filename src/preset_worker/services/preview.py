@@ -40,7 +40,7 @@ class PreviewService:
         file_token = self.candidate_processor._canonical_attachment(
             record,
             submission_id,
-            candidate.canonical_json,
+            candidate.canonical_artifact,
         )
         record_id = record["record_id"]
         # Persist the complete result before handing ownership back to Miaoda.

@@ -149,7 +149,7 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         )
         preview = PreviewService(preview_client).preview_submission("S123")
 
-        self.assertEqual(preview.canonical_json, formal.canonical_json)
+        self.assertEqual(preview.canonical_artifact.content, formal.canonical_artifact.content)
         self.assertEqual(preview.diff, formal.diff)
 
     def test_create(self):
@@ -159,8 +159,9 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         self.assertEqual(result.base_version_id, "")
         self.assertEqual(result.base_version_no_text, "")
         self.assertEqual(result.status, "READY_FOR_REVIEW")
-        self.assertEqual(result.canonical_json["name"], "L2002CF @BBL P2S")
-        self.assertEqual(result.canonical_json["pm_method_version"], "2.1")
+        canonical = json.loads(result.canonical_artifact.content)
+        self.assertEqual(canonical["name"], "L2002CF @BBL P2S")
+        self.assertEqual(canonical["pm_method_version"], "2.1")
         self.assertEqual(client.uploads[0][0], "L2002CF @BBL P2S.json")
 
     def test_formula_preset_key_is_read_but_not_written(self):

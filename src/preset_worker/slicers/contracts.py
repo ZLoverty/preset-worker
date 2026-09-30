@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol
 
@@ -23,6 +22,15 @@ class ProcessingContext:
     printer: str
     slicer: str
     pm_method_version: str
+
+
+@dataclass(frozen=True)
+class Artifact:
+    """Opaque slicer artifact. Only its owner may interpret ``content``."""
+
+    content: bytes
+    filename: str
+    media_type: str | None = None
 
 
 @dataclass(frozen=True)
@@ -47,39 +55,38 @@ class ValidationResult:
 
 @dataclass(frozen=True)
 class ProcessedArtifact:
-    canonical_artifact: bytes
+    canonical_artifact: Artifact
     validation_result: ValidationResult
-    parsed: Any = field(repr=False, compare=False)
 
 
 class SlicerProcessor(Protocol):
     slicer_id: str
 
-    def parse(self, artifact: bytes, context: ProcessingContext) -> Any: ...
+    def parse(self, artifact: Artifact, context: ProcessingContext) -> Any: ...
     def validate_source(self, source: Any, context: ProcessingContext) -> ValidationResult: ...
     def normalize(self, source: Any, context: ProcessingContext) -> Any: ...
     def apply_company_policy(self, normalized: Any, context: ProcessingContext) -> Any: ...
     def validate_canonical(self, canonical: Any, context: ProcessingContext) -> ValidationResult: ...
-    def serialize(self, canonical: Any, context: ProcessingContext) -> bytes: ...
-    def diff(self, base_artifact: bytes | None, candidate_artifact: bytes, context: ProcessingContext) -> dict[str, list[dict[str, Any]]]: ...
+    def serialize(self, canonical: Any, context: ProcessingContext) -> Artifact: ...
+    def diff(self, base_artifact: Artifact | None, candidate_artifact: Artifact, context: ProcessingContext) -> dict[str, list[dict[str, Any]]]: ...
 
 
 def process_artifact(
     processor: SlicerProcessor,
-    artifact: bytes,
+    artifact: Artifact,
     context: ProcessingContext,
 ) -> ProcessedArtifact:
     """Run the explicit stages for processors that only implement the contract."""
     source = processor.parse(artifact, context)
     validation = processor.validate_source(source, context)
     if not validation.valid:
-        return ProcessedArtifact(b"", validation, source)
+        return ProcessedArtifact(Artifact(b"", "", None), validation)
     normalized = processor.normalize(source, context)
     canonical = processor.apply_company_policy(normalized, context)
     validation = processor.validate_canonical(canonical, context)
     if not validation.valid:
-        return ProcessedArtifact(b"", validation, source)
-    return ProcessedArtifact(processor.serialize(canonical, context), validation, source)
+        return ProcessedArtifact(Artifact(b"", "", None), validation)
+    return ProcessedArtifact(processor.serialize(canonical, context), validation)
 
 
 class SlicerProcessorRegistry:
@@ -121,10 +128,3 @@ class InternalProcessingError(RuntimeError):
     def __init__(self, message: str):
         self.validation = ValidationResult(ValidationStatus.INTERNAL_PROCESSING_FAILURE, (message,))
         super().__init__(message)
-
-
-def parse_json_artifact(artifact: bytes) -> Any:
-    try:
-        return json.loads(artifact.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise InvalidArtifactError(f"uploaded_json 不是有效 JSON: {exc}") from exc
