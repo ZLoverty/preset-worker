@@ -5,6 +5,7 @@ from .creality_print import CrealityPrintProcessor
 from .elegoo_slicer import ElegooSlicerProcessor
 from .orca_slicer import OrcaSlicerProcessor
 from .prusa_slicer import PrusaSlicerProcessor
+from .snapmaker_orca import SnapmakerOrcaSlicerProcessor
 from ..diff import (
     ChangeType,
     DiffCategory,
@@ -32,6 +33,7 @@ __all__ = [
     "ElegooSlicerProcessor",
     "OrcaSlicerProcessor",
     "PrusaSlicerProcessor",
+    "SnapmakerOrcaSlicerProcessor",
     "ChangeType",
     "DiffCategory",
     "DiffChange",
