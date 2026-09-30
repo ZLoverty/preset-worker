@@ -2,6 +2,7 @@
 
 from .bambu_studio import BambuStudioProcessor
 from .creality_print import CrealityPrintProcessor
+from .elegoo_slicer import ElegooSlicerProcessor
 from .orca_slicer import OrcaSlicerProcessor
 from ..diff import (
     ChangeType,
@@ -27,6 +28,7 @@ from .registry import default_processor_registry
 __all__ = [
     "BambuStudioProcessor",
     "CrealityPrintProcessor",
+    "ElegooSlicerProcessor",
     "OrcaSlicerProcessor",
     "ChangeType",
     "DiffCategory",
