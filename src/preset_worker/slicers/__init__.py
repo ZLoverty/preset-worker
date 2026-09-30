@@ -4,6 +4,7 @@ from .bambu_studio import BambuStudioProcessor
 from .creality_print import CrealityPrintProcessor
 from .elegoo_slicer import ElegooSlicerProcessor
 from .orca_slicer import OrcaSlicerProcessor
+from .prusa_slicer import PrusaSlicerProcessor
 from ..diff import (
     ChangeType,
     DiffCategory,
@@ -30,6 +31,7 @@ __all__ = [
     "CrealityPrintProcessor",
     "ElegooSlicerProcessor",
     "OrcaSlicerProcessor",
+    "PrusaSlicerProcessor",
     "ChangeType",
     "DiffCategory",
     "DiffChange",

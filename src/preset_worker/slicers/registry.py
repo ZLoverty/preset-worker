@@ -9,6 +9,7 @@ from .contracts import SlicerProcessorRegistry
 from .creality_print import CrealityPrintProcessor
 from .elegoo_slicer import ElegooSlicerProcessor
 from .orca_slicer import OrcaSlicerProcessor
+from .prusa_slicer import PrusaSlicerProcessor
 
 
 def default_processor_registry() -> SlicerProcessorRegistry:
@@ -17,4 +18,5 @@ def default_processor_registry() -> SlicerProcessorRegistry:
         OrcaSlicerProcessor(),
         CrealityPrintProcessor(),
         ElegooSlicerProcessor(),
+        PrusaSlicerProcessor(),
     ])
