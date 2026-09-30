@@ -40,6 +40,13 @@ class OrcaSlicerProcessorTests(unittest.TestCase):
         self.assertEqual(canonical["filament_settings_id"], ["pla_test"])
         self.assertEqual(canonical["nozzle_temperature"], ["230"])
 
+    def test_worker_always_injects_pm_method_version_despite_orca_roundtrip_loss(self):
+        source = Artifact((FIXTURE.parent / "pla_test.json").read_bytes(), "pla_test.json")
+        context = ProcessingContext("PI", "Printer", "OrcaSlicer", "regression-method-7.3.1")
+        processed = self.processor.process(source, context)
+        canonical = json.loads(processed.canonical_artifact.content)
+        self.assertEqual(canonical["pm_method_version"], context.pm_method_version)
+
     def test_invalid_or_wrong_preset_is_rejected(self):
         invalid = Artifact(b"not-json", "bad.json")
         with self.assertRaises(ValueError):
