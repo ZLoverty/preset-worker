@@ -99,10 +99,18 @@ class OrcaSlicerProcessor(SlicerProcessor):
         if not isinstance(source, dict):
             errors.append("OrcaSlicer preset 顶层必须是 object")
         else:
-            if source.get("type") != "filament":
+            # GUI-exported user filament presets may omit `type`; the
+            # authoritative export fixture identifies itself through
+            # filament_settings_id and filament settings fields instead.
+            if "type" in source and source.get("type") != "filament":
                 errors.append("OrcaSlicer preset 必须是 filament 类型")
             if not isinstance(source.get("name"), str) or not source["name"].strip():
                 errors.append("OrcaSlicer preset 缺少有效 name")
+            elif "type" not in source and not (
+                isinstance(source.get("filament_settings_id"), list)
+                or any(key.startswith("filament_") for key in source)
+            ):
+                errors.append("OrcaSlicer preset 不是可识别的 filament preset")
         status = ValidationStatus.VALID if not errors else ValidationStatus.INVALID_USER_ARTIFACT
         return ValidationResult(status, tuple(errors))
 
@@ -111,7 +119,11 @@ class OrcaSlicerProcessor(SlicerProcessor):
 
     def apply_company_policy(self, normalized: Any, context: ProcessingContext) -> Any:
         canonical = copy.deepcopy(normalized)
-        canonical["name"] = f"{context.pi_code} @{context.printer}"
+        canonical_name = f"{context.pi_code} @{context.printer}"
+        canonical["name"] = canonical_name
+        # P7.3.1 GUI experiments showed that changing name alone creates the
+        # intended visible preset identity. Preserve filament_settings_id and
+        # other Orca identity metadata to minimize native-field mutation.
         canonical["pm_method_version"] = context.pm_method_version
         return canonical
 

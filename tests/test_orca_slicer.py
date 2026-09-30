@@ -31,6 +31,15 @@ class OrcaSlicerProcessorTests(unittest.TestCase):
         self.assertEqual(canonical["future_unknown_field"], "preserve-me")
         self.assertEqual(canonical["inherits"], "fdm_filament_pla")
 
+    def test_real_gui_export_shape_is_accepted_and_identity_is_updated(self):
+        source = Artifact((FIXTURE.parent / "pla_test.json").read_bytes(), "pla_test.json")
+        processed = self.processor.process(source, self.context)
+        self.assertTrue(processed.validation_result.valid)
+        canonical = json.loads(processed.canonical_artifact.content)
+        self.assertEqual(canonical["name"], "PI @Printer")
+        self.assertEqual(canonical["filament_settings_id"], ["pla_test"])
+        self.assertEqual(canonical["nozzle_temperature"], ["230"])
+
     def test_invalid_or_wrong_preset_is_rejected(self):
         invalid = Artifact(b"not-json", "bad.json")
         with self.assertRaises(ValueError):
@@ -59,6 +68,14 @@ class OrcaSlicerProcessorTests(unittest.TestCase):
         result = self.processor.diff(base, candidate, self.context)
         self.assertEqual(result.changes[0].change_type, ChangeType.ADDED)
         self.assertIsNone(result.changes[0].new_value)
+
+    def test_real_worker_roundtrip_records_orca_dropping_custom_metadata(self):
+        worker = json.loads((FIXTURE.parents[1] / "roundtrip/worker_canonical_candidate.json").read_text())
+        reexport = json.loads((FIXTURE.parents[1] / "roundtrip/L2002CF @BBL P2S.json").read_text())
+        self.assertEqual(worker["name"], reexport["name"])
+        self.assertEqual(worker["inherits"], reexport["inherits"])
+        self.assertIn("pm_method_version", worker)
+        self.assertNotIn("pm_method_version", reexport)
 
 
 if __name__ == "__main__":
