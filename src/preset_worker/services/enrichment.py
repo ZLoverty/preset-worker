@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import mimetypes
-import copy
 import time
 import uuid
 from dataclasses import dataclass
@@ -18,6 +17,10 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+
+from ..slicers import BambuStudioProcessor, ProcessingContext, SlicerProcessorRegistry, process_artifact
+from ..slicers.bambu_studio import calculate_diff
+from ..slicers.contracts import UnsupportedSlicerError
 
 
 AUTH_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
@@ -314,80 +317,6 @@ def _submission_method_version(fields: dict[str, Any]) -> str:
     return _lookup_text(value)
 
 
-def validate_json(value: Any) -> dict[str, Any]:
-    errors: list[str] = []
-    if not isinstance(value, dict):
-        errors.append("JSON 顶层必须是 object")
-    elif not all(isinstance(key, str) and key for key in value):
-        errors.append("JSON object 的字段名必须是非空字符串")
-    return {"valid": not errors, "errors": errors, "warnings": []}
-
-
-class UnsupportedSlicerError(ValueError):
-    pass
-
-
-class BambuStudioProcessor:
-    def __init__(self, *, pi_code: str, printer: str, pm_method_version: str):
-        self.pi_code = pi_code
-        self.printer = printer
-        self.pm_method_version = pm_method_version
-
-    def validate(self, uploaded: Any) -> dict[str, Any]:
-        validation = validate_json(uploaded)
-        if validation["valid"] and "version" not in uploaded:
-            validation["valid"] = False
-            validation["errors"].append("BambuStudio JSON 缺少必需字段: version")
-        return validation
-
-    def canonicalize(self, uploaded: Any) -> Any:
-        # P2 has exactly two semantic canonicalization rules.  Deep-copying
-        # protects uploaded_json from in-place mutation.
-        canonical = copy.deepcopy(uploaded)
-        canonical["name"] = f"{self.pi_code} @{self.printer}"
-        canonical["pm_method_version"] = self.pm_method_version
-        return canonical
-
-
-def processor_for(slicer: str, *, pi_code: str, printer: str, pm_method_version: str) -> BambuStudioProcessor:
-    if slicer != "BambuStudio":
-        raise UnsupportedSlicerError(f"暂不支持 slicer: {slicer}")
-    return BambuStudioProcessor(
-        pi_code=pi_code,
-        printer=printer,
-        pm_method_version=pm_method_version,
-    )
-
-
-def _flatten(value: Any, path: str = "") -> dict[str, Any]:
-    if isinstance(value, dict):
-        result: dict[str, Any] = {}
-        for key, child in value.items():
-            result.update(_flatten(child, f"{path}.{key}" if path else key))
-        return result
-    if isinstance(value, list):
-        result = {}
-        for index, child in enumerate(value):
-            result.update(_flatten(child, f"{path}[{index}]"))
-        return result
-    return {path: value}
-
-
-def calculate_diff(old: Any | None, new: Any) -> dict[str, list[dict[str, Any]]]:
-    new_flat = _flatten(new)
-    if old is None:
-        return {"added": [{"path": path, "new": value} for path, value in new_flat.items()], "removed": [], "modified": []}
-    old_flat = _flatten(old)
-    added = [{"path": path, "new": new_flat[path]} for path in new_flat.keys() - old_flat.keys()]
-    removed = [{"path": path, "old": old_flat[path]} for path in old_flat.keys() - new_flat.keys()]
-    modified = [
-        {"path": path, "old": old_flat[path], "new": new_flat[path]}
-        for path in new_flat.keys() & old_flat.keys()
-        if old_flat[path] != new_flat[path]
-    ]
-    return {key: sorted(value, key=lambda item: item["path"]) for key, value in {"added": added, "removed": removed, "modified": modified}.items()}
-
-
 def _json_field(value: object, default: Any) -> Any:
     if isinstance(value, str):
         try:
@@ -423,8 +352,9 @@ class CandidateFailure(ValueError):
 
 
 class SubmissionEnrichment:
-    def __init__(self, client: FeishuClient):
+    def __init__(self, client: FeishuClient, *, processor_registry: SlicerProcessorRegistry | None = None):
         self.client = client
+        self.processor_registry = processor_registry or SlicerProcessorRegistry([BambuStudioProcessor()])
 
     def _find_preset(self, preset_key: str) -> dict[str, Any] | None:
         matches = [
@@ -494,29 +424,29 @@ class SubmissionEnrichment:
         attachments = _preset_data_attachments(fields)
         if not attachments:
             raise ValidationFailure({"valid": False, "errors": ["Submission 缺少 uploaded_json 附件"], "warnings": []})
+        artifact = self.client.download_attachment(attachments[0])
+        processor = self.processor_registry.get(slicer)
+        if processor is None:
+            # Keep the historical exception/API while making the failure
+            # machine-readable through UnsupportedSlicerError.validation.
+            raise UnsupportedSlicerError(slicer)
+        context = ProcessingContext(
+            pi_code=pi_code,
+            printer=printer,
+            slicer=slicer,
+            pm_method_version=pm_method_version,
+        )
         try:
-            uploaded = json.loads(self.client.download_attachment(attachments[0]).decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ValidationFailure({
-                "valid": False,
-                "errors": [f"uploaded_json 不是有效 JSON: {exc}"],
-                "warnings": [],
-            }) from exc
-
-        try:
-            processor = processor_for(
-                slicer,
-                pi_code=pi_code,
-                printer=printer,
-                pm_method_version=pm_method_version,
-            )
-        except UnsupportedSlicerError:
+            processed = process_artifact(processor, artifact, context)
+        except ValueError as exc:
+            validation = getattr(exc, "validation", None)
+            if validation is not None:
+                raise ValidationFailure(validation.as_dict()) from exc
             raise
-        validation = processor.validate(uploaded)
-        if not validation["valid"]:
+        validation = processed.validation_result.as_dict()
+        if not processed.validation_result.valid:
             raise ValidationFailure(validation)
-
-        canonical = processor.canonicalize(uploaded)
+        canonical = json.loads(processed.canonical_artifact.decode("utf-8"))
         preset = self._find_preset(preset_key)
         operation = "UPDATE" if preset else "CREATE"
         base_version_id, base_version_record_id, base_version_no_text, base_json = (
@@ -529,7 +459,11 @@ class SubmissionEnrichment:
             base_version_record_id=base_version_record_id,
             base_version_no_text=base_version_no_text,
             canonical_json=canonical,
-            diff=calculate_diff(base_json, canonical),
+            diff=processor.diff(
+                json.dumps(base_json, ensure_ascii=False).encode("utf-8") if base_json is not None else None,
+                processed.canonical_artifact,
+                context,
+            ),
             validation=validation,
         )
 
