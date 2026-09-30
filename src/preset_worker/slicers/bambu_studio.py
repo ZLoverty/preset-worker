@@ -70,9 +70,10 @@ SYSTEM_METADATA_PATHS = frozenset({
 
 
 def _category(path: str) -> DiffCategory:
-    if path in IMPORTANT_PARAMETER_PATHS:
+    field = path.split("[", 1)[0]
+    if field in IMPORTANT_PARAMETER_PATHS:
         return DiffCategory.IMPORTANT_PARAMETER
-    if path in SYSTEM_METADATA_PATHS:
+    if field in SYSTEM_METADATA_PATHS:
         return DiffCategory.SYSTEM_METADATA
     return DiffCategory.OTHER_PARAMETER
 

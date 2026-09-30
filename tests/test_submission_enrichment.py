@@ -262,7 +262,7 @@ class SubmissionEnrichmentTests(unittest.TestCase):
 
     def test_unsupported_slicer(self):
         client = FakeClient({"name": "same", "version": "1"})
-        client.submission["fields"]["slicer"] = [{"text": "OrcaSlicer"}]
+        client.submission["fields"]["slicer"] = [{"text": "Cura"}]
         with self.assertRaises(UnsupportedSlicerError):
             SubmissionEnrichment(client).enrich_submission("S123")
         self.assertEqual(client.updates[-1]["status"], "VALIDATION_FAILED")

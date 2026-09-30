@@ -1,6 +1,7 @@
 """Slicer-specific artifact processing."""
 
 from .bambu_studio import BambuStudioProcessor
+from .orca_slicer import OrcaSlicerProcessor
 from ..diff import (
     ChangeType,
     DiffCategory,
@@ -24,6 +25,7 @@ from .registry import default_processor_registry
 
 __all__ = [
     "BambuStudioProcessor",
+    "OrcaSlicerProcessor",
     "ChangeType",
     "DiffCategory",
     "DiffChange",
