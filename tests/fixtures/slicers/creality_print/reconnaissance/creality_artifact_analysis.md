@@ -11,7 +11,7 @@
 
 ## Container and import-unit assessment
 
-The artifact is valid plain JSON (magic/content inspection; no archive signature), with a top-level object. It is not a ZIP, 3MF, directory, or multi-file package. The supplied artifact therefore represents one individual preset file and is the current candidate for CrealityPrint's import unit. The baseline GUI import still needs human verification.
+The artifact is valid plain JSON (magic/content inspection; no archive signature), with a top-level object. It is not a ZIP, 3MF, directory, or multi-file package. The supplied artifact therefore represents one individual preset file and is the confirmed CrealityPrint import unit. The baseline GUI import succeeded and conflicted with the existing same-name preset.
 
 The existing opaque `Artifact(content: bytes, filename, media_type)` abstraction is sufficient to represent this file unchanged. No Artifact, UnifiedDiff, workflow, or registry change is justified by this reconnaissance.
 
@@ -50,11 +50,11 @@ No UUID, vendor field, printer field, or separate profile ID was observed.
 
 ## Parameter preservation baseline
 
-The controlled variants preserve `fan_cooling_layer_time`, `nozzle_temperature`, and `nozzle_temperature_initial_layer`. They also preserve `inherits` except where explicitly stated in future experiments. GUI import and re-export are required before concluding that CrealityPrint preserves these values.
+The controlled variants preserve `fan_cooling_layer_time`, `nozzle_temperature`, and `nozzle_temperature_initial_layer`. They also preserve `inherits`. GUI import and re-export confirmed that these values remain unchanged.
 
 ## `pm_method_version`
 
-`04_name_custom_metadata.json` adds the unknown top-level field `pm_method_version` while preserving all source fields. This is an exploratory extensibility test only. Whether CrealityPrint accepts, strips, rewrites, or preserves it is unknown until GUI round-trip evidence is available. `Submission.pm_method_version` remains authoritative.
+`04_name_custom_metadata.json` adds the unknown top-level field `pm_method_version` while preserving all source fields. CrealityPrint accepted the file on import and stripped the field on re-export. `Submission.pm_method_version` remains authoritative.
 
 ## GUI and round-trip conclusion
 
