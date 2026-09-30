@@ -1,6 +1,7 @@
 import unittest
 
 from preset_worker.services.enrichment import SubmissionEnrichment
+from preset_worker.diff import ChangeType, DiffCategory, DiffChange, UnifiedDiff
 from preset_worker.slicers import (
     Artifact,
     ProcessingContext,
@@ -32,7 +33,13 @@ class NonJsonProcessor:
         return Artifact(canonical, "example.fake", "application/octet-stream")
 
     def diff(self, base, candidate, context):
-        return {"raw": f"{base.content!r}->{candidate.content!r}"}
+        return UnifiedDiff((DiffChange(
+            "fake.parameter",
+            ChangeType.MODIFIED,
+            DiffCategory.OTHER_PARAMETER,
+            "A",
+            "B",
+        ),))
 
 
 class FakeClient:
@@ -95,7 +102,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
 
         self.assertEqual(result.canonical_artifact.content, b"NOT JSON!")
         self.assertEqual(result.canonical_artifact.filename, "example.fake")
-        self.assertEqual(result.diff, {"raw": "b'BASE NOT JSON'->b'NOT JSON!'"})
+        self.assertEqual(result.diff.changes[0].path, "fake.parameter")
 
     def test_persistence_uses_processor_artifact_bytes_and_filename(self):
         client = FakeClient()

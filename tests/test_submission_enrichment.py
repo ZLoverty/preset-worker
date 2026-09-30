@@ -6,8 +6,8 @@ from preset_worker.services.enrichment import (
     SubmissionEnrichment,
     UnsupportedSlicerError,
     ValidationFailure,
-    calculate_diff,
 )
+from preset_worker.slicers.bambu_studio import calculate_diff
 from preset_worker.services.preview import PreviewService
 
 
@@ -112,7 +112,7 @@ class SubmissionEnrichmentTests(unittest.TestCase):
 
         self.assertEqual(result.operation, "UPDATE")
         self.assertEqual(result.base_version_id, "P42@v7")
-        self.assertEqual(result.diff["modified"][0]["path"], "name")
+        self.assertEqual(result.diff.changes[0].path, "name")
         self.assertEqual(client.submission["fields"]["status"], "DRAFT")
         self.assertEqual(client.presets[0]["fields"]["current_version_id"][0]["text"], "P42@v7")
 
@@ -183,7 +183,7 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         self.assertEqual(result.operation, "UPDATE")
         self.assertEqual(result.base_version_id, "P42@v7")
         self.assertEqual(result.base_version_no_text, "7")
-        self.assertEqual(result.diff["modified"][0]["path"], "name")
+        self.assertEqual(result.diff.changes[0].path, "name")
 
     def test_formal_enrichment_writes_base_pair_together(self):
         client = FakeClient({"name": "new", "version": "1", "temperature": "220"})
@@ -243,9 +243,12 @@ class SubmissionEnrichmentTests(unittest.TestCase):
 
     def test_diff(self):
         diff = calculate_diff({"a": 1, "old": True}, {"a": 2, "new": False})
-        self.assertEqual(diff["modified"], [{"path": "a", "old": 1, "new": 2}])
-        self.assertEqual(diff["added"], [{"path": "new", "new": False}])
-        self.assertEqual(diff["removed"], [{"path": "old", "old": True}])
+        self.assertEqual(diff.changes[0].path, "a")
+        self.assertEqual(diff.changes[0].change_type.value, "MODIFIED")
+        self.assertEqual(diff.changes[1].path, "new")
+        self.assertEqual(diff.changes[1].change_type.value, "ADDED")
+        self.assertEqual(diff.changes[2].path, "old")
+        self.assertEqual(diff.changes[2].change_type.value, "REMOVED")
 
     def test_rerun_does_not_create_preset_or_version(self):
         client = FakeClient({"name": "same", "version": "1"})

@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol
 
+from ..diff import UnifiedDiff
+
 
 class ValidationStatus(str, Enum):
     VALID = "valid"
@@ -68,7 +70,7 @@ class SlicerProcessor(Protocol):
     def apply_company_policy(self, normalized: Any, context: ProcessingContext) -> Any: ...
     def validate_canonical(self, canonical: Any, context: ProcessingContext) -> ValidationResult: ...
     def serialize(self, canonical: Any, context: ProcessingContext) -> Artifact: ...
-    def diff(self, base_artifact: Artifact | None, candidate_artifact: Artifact, context: ProcessingContext) -> dict[str, list[dict[str, Any]]]: ...
+    def diff(self, base_artifact: Artifact, candidate_artifact: Artifact, context: ProcessingContext) -> UnifiedDiff: ...
 
 
 def process_artifact(

@@ -1,6 +1,14 @@
 """Slicer-specific artifact processing."""
 
 from .bambu_studio import BambuStudioProcessor
+from ..diff import (
+    ChangeType,
+    DiffCategory,
+    DiffChange,
+    UnifiedDiff,
+    deserialize_unified_diff,
+    serialize_unified_diff,
+)
 from .contracts import (
     Artifact,
     InternalProcessingError,
@@ -16,6 +24,12 @@ from .registry import default_processor_registry
 
 __all__ = [
     "BambuStudioProcessor",
+    "ChangeType",
+    "DiffCategory",
+    "DiffChange",
+    "UnifiedDiff",
+    "deserialize_unified_diff",
+    "serialize_unified_diff",
     "Artifact",
     "InternalProcessingError",
     "ProcessedArtifact",

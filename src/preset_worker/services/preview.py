@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ..diff import serialize_unified_diff
 from .enrichment import (
     CandidateFailure,
     CandidateResult,
@@ -52,7 +53,7 @@ class PreviewService:
                 if candidate.base_version_record_id
                 else [],
                 "canonical_json": [{"file_token": file_token}],
-                "diff": json.dumps(candidate.diff, ensure_ascii=False),
+                "diff": serialize_unified_diff(candidate.diff),
                 "validation": json.dumps(candidate.validation, ensure_ascii=False),
             },
         )

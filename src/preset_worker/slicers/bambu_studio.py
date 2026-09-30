@@ -6,6 +6,7 @@ import copy
 import json
 from typing import Any
 
+from ..diff import ChangeType, DiffCategory, DiffChange, UnifiedDiff
 from .contracts import (
     Artifact,
     InvalidArtifactError,
@@ -38,15 +39,65 @@ def _flatten(value: Any, path: str = "") -> dict[str, Any]:
     return {path: value}
 
 
-def _calculate_diff(old: Any | None, new: Any) -> dict[str, list[dict[str, Any]]]:
+IMPORTANT_PARAMETER_PATHS = frozenset({
+    "temperature",
+    "nozzle_temperature",
+    "bed_temperature",
+    "initial_layer_temperature",
+    "initial_layer_bed_temperature",
+    "flow_ratio",
+    "filament_flow_ratio",
+    "pressure_advance",
+    "filament_pressure_advance",
+    "retraction_length",
+    "retraction_speed",
+    "max_volumetric_speed",
+    "layer_height",
+    "initial_layer_print_height",
+    "fan_min",
+    "fan_max",
+})
+
+SYSTEM_METADATA_PATHS = frozenset({
+    "name",
+    "version",
+    "inherits",
+    "pm_method_version",
+    "filament_settings_id",
+    "printer_settings_id",
+    "process_settings_id",
+})
+
+
+def _category(path: str) -> DiffCategory:
+    if path in IMPORTANT_PARAMETER_PATHS:
+        return DiffCategory.IMPORTANT_PARAMETER
+    if path in SYSTEM_METADATA_PATHS:
+        return DiffCategory.SYSTEM_METADATA
+    return DiffCategory.OTHER_PARAMETER
+
+
+def _calculate_diff(old: Any | None, new: Any) -> UnifiedDiff:
     new_flat = _flatten(new)
+    changes: list[DiffChange] = []
     if old is None:
-        return {"added": [{"path": p, "new": v} for p, v in new_flat.items()], "removed": [], "modified": []}
-    old_flat = _flatten(old)
-    added = [{"path": p, "new": new_flat[p]} for p in new_flat.keys() - old_flat.keys()]
-    removed = [{"path": p, "old": old_flat[p]} for p in old_flat.keys() - new_flat.keys()]
-    modified = [{"path": p, "old": old_flat[p], "new": new_flat[p]} for p in new_flat.keys() & old_flat.keys() if old_flat[p] != new_flat[p]]
-    return {key: sorted(value, key=lambda item: item["path"]) for key, value in {"added": added, "removed": removed, "modified": modified}.items()}
+        changes = [DiffChange(path, ChangeType.ADDED, _category(path), None, value) for path, value in new_flat.items()]
+    else:
+        old_flat = _flatten(old)
+        changes.extend(
+            DiffChange(path, ChangeType.ADDED, _category(path), None, new_flat[path])
+            for path in new_flat.keys() - old_flat.keys()
+        )
+        changes.extend(
+            DiffChange(path, ChangeType.REMOVED, _category(path), old_flat[path], None)
+            for path in old_flat.keys() - new_flat.keys()
+        )
+        changes.extend(
+            DiffChange(path, ChangeType.MODIFIED, _category(path), old_flat[path], new_flat[path])
+            for path in new_flat.keys() & old_flat.keys()
+            if old_flat[path] != new_flat[path]
+        )
+    return UnifiedDiff(tuple(sorted(changes, key=lambda change: change.path)))
 
 
 class BambuStudioProcessor(SlicerProcessor):
@@ -84,7 +135,7 @@ class BambuStudioProcessor(SlicerProcessor):
             media_type="application/json",
         )
 
-    def diff(self, base_artifact: Artifact | None, candidate_artifact: Artifact, context: ProcessingContext) -> dict[str, list[dict[str, Any]]]:
+    def diff(self, base_artifact: Artifact, candidate_artifact: Artifact, context: ProcessingContext) -> UnifiedDiff:
         base = parse_json_artifact(base_artifact.content) if base_artifact is not None else None
         candidate = parse_json_artifact(candidate_artifact.content)
         return _calculate_diff(base, candidate)
@@ -102,6 +153,6 @@ class BambuStudioProcessor(SlicerProcessor):
         return ProcessedArtifact(self.serialize(canonical, context), validation)
 
 
-def calculate_diff(old: Any | None, new: Any) -> dict[str, list[dict[str, Any]]]:
+def calculate_diff(old: Any | None, new: Any) -> UnifiedDiff:
     """Compatibility helper retained for callers outside the processor."""
     return _calculate_diff(old, new)

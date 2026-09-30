@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 
 from ..slicers import Artifact, ProcessingContext, SlicerProcessorRegistry, process_artifact
 from ..slicers.registry import default_processor_registry
-from ..slicers.bambu_studio import calculate_diff
+from ..diff import UnifiedDiff, deserialize_unified_diff, serialize_unified_diff
 from ..slicers.contracts import UnsupportedSlicerError
 
 
@@ -335,7 +335,7 @@ class CandidateResult:
     base_version_record_id: str | None
     base_version_no_text: str
     canonical_artifact: Artifact
-    diff: dict[str, Any]
+    diff: UnifiedDiff
     validation: dict[str, Any]
 
 
@@ -403,7 +403,7 @@ class SubmissionEnrichment:
             base_version_record_id=None,
             base_version_no_text=str(fields.get(BASE_VERSION_NO_TEXT_FIELD, "")),
             canonical_artifact=Artifact(b"", "", None),
-            diff=_json_field(fields.get("diff"), {}),
+            diff=deserialize_unified_diff(fields.get("diff", "{}")),
             validation=_json_field(fields.get("validation"), {}),
             status=str(fields.get("status", "READY_FOR_REVIEW")),
         )
@@ -467,10 +467,10 @@ class SubmissionEnrichment:
             base_version_record_id=base_version_record_id,
             base_version_no_text=base_version_no_text,
             canonical_artifact=processed.canonical_artifact,
-            diff=processor.diff(
-                base_artifact,
-                processed.canonical_artifact,
-                context,
+            diff=(
+                processor.diff(base_artifact, processed.canonical_artifact, context)
+                if operation == "UPDATE"
+                else UnifiedDiff.empty()
             ),
             validation=validation,
         )
@@ -524,7 +524,7 @@ class SubmissionEnrichment:
                 else [],
                 BASE_VERSION_NO_TEXT_FIELD: candidate.base_version_no_text,
                 "canonical_json": [{"file_token": file_token}],
-                "diff": json.dumps(result.diff, ensure_ascii=False),
+                "diff": serialize_unified_diff(result.diff),
                 "validation": json.dumps(result.validation, ensure_ascii=False),
                 "status": result.status,
             },
@@ -597,6 +597,8 @@ def _json_default(value: object) -> object:
             "media_type": value.media_type,
             "size": len(value.content),
         }
+    if isinstance(value, UnifiedDiff):
+        return value.to_dict()
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
