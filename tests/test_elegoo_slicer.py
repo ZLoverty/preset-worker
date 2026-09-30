@@ -159,7 +159,8 @@ class ElegooSlicerWorkflowTests(unittest.TestCase):
         canonical = json.loads(result.canonical_artifact.content)
         self.assertEqual(canonical["name"], "L2002CF @BBL P2S")
         self.assertEqual(canonical["pm_method_version"], "method-7.5")
-        self.assertEqual(result.diff, UnifiedDiff.empty())
+        self.assertTrue(result.diff.changes)
+        self.assertTrue(all(change.change_type is ChangeType.ADDED for change in result.diff.changes))
 
     def test_update_passes_base_to_elegoo_diff(self):
         client = WorkflowClient(with_base=True)

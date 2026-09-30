@@ -172,7 +172,9 @@ class PrusaSlicerWorkflowTests(unittest.TestCase):
         self.assertEqual(result.operation, "CREATE")
         self.assertEqual(result.canonical_artifact.filename, "L2002CF @MK4S.ini")
         self.assertIn("pm_method_version = method-7.6", result.canonical_artifact.content.decode())
-        self.assertEqual(result.diff, UnifiedDiff.empty())
+        self.assertTrue(result.diff.changes)
+        self.assertIn("$artifact.filename", {change.path for change in result.diff.changes})
+        self.assertTrue(all(change.change_type is ChangeType.ADDED for change in result.diff.changes))
 
     def test_update_passes_base_to_prusa_diff(self):
         client = WorkflowClient(with_base=True)

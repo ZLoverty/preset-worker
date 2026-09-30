@@ -35,9 +35,9 @@ class NonJsonProcessor:
     def diff(self, base, candidate, context):
         return UnifiedDiff((DiffChange(
             "fake.parameter",
-            ChangeType.MODIFIED,
+            ChangeType.ADDED if base is None else ChangeType.MODIFIED,
             DiffCategory.OTHER_PARAMETER,
-            "A",
+            None if base is None else "A",
             "B",
         ),))
 
@@ -103,6 +103,19 @@ class ArtifactBoundaryTests(unittest.TestCase):
         self.assertEqual(result.canonical_artifact.content, b"NOT JSON!")
         self.assertEqual(result.canonical_artifact.filename, "example.fake")
         self.assertEqual(result.diff.changes[0].path, "fake.parameter")
+        self.assertEqual(result.diff.changes[0].change_type, ChangeType.MODIFIED)
+
+    def test_non_json_create_uses_processor_initial_diff_without_parsing(self):
+        client = FakeClient()
+        client.presets = []
+        result = SubmissionEnrichment(
+            client,
+            processor_registry=SlicerProcessorRegistry([NonJsonProcessor()]),
+        ).process_candidate(client.submission, "S1")
+
+        self.assertEqual(result.operation, "CREATE")
+        self.assertEqual(result.diff.changes[0].change_type, ChangeType.ADDED)
+        self.assertIsNone(result.diff.changes[0].old_value)
 
     def test_persistence_uses_processor_artifact_bytes_and_filename(self):
         client = FakeClient()

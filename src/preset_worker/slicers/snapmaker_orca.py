@@ -35,7 +35,7 @@ class SnapmakerOrcaSlicerProcessor:
     def serialize(self, canonical: Any, context: ProcessingContext) -> Artifact:
         return self._core.serialize(canonical, context)
 
-    def diff(self, base_artifact: Artifact, candidate_artifact: Artifact, context: ProcessingContext) -> UnifiedDiff:
+    def diff(self, base_artifact: Artifact | None, candidate_artifact: Artifact, context: ProcessingContext) -> UnifiedDiff:
         return self._core.diff(base_artifact, candidate_artifact, context)
 
     def process(self, artifact: Artifact, context: ProcessingContext) -> ProcessedArtifact:

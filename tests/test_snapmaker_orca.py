@@ -173,7 +173,8 @@ class SnapmakerOrcaWorkflowTests(unittest.TestCase):
         canonical = json.loads(result.canonical_artifact.content)
         self.assertEqual(canonical["name"], "L2002CF @Snapmaker U1")
         self.assertEqual(canonical["pm_method_version"], "method-7.7")
-        self.assertEqual(result.diff, UnifiedDiff.empty())
+        self.assertTrue(result.diff.changes)
+        self.assertTrue(all(change.change_type is ChangeType.ADDED for change in result.diff.changes))
 
     def test_update_uses_snapmaker_diff_and_namespace(self):
         client = WorkflowClient(with_base=True)

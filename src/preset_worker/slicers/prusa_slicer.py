@@ -182,7 +182,7 @@ class PrusaSlicerProcessor(SlicerProcessor):
             media_type="text/plain",
         )
 
-    def diff(self, base_artifact: Artifact, candidate_artifact: Artifact, context: ProcessingContext) -> UnifiedDiff:
+    def diff(self, base_artifact: Artifact | None, candidate_artifact: Artifact, context: ProcessingContext) -> UnifiedDiff:
         base = _parse_ini(base_artifact) if base_artifact is not None else None
         candidate = _parse_ini(candidate_artifact)
         changes: list[DiffChange] = []

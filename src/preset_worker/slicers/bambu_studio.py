@@ -136,7 +136,7 @@ class BambuStudioProcessor(SlicerProcessor):
             media_type="application/json",
         )
 
-    def diff(self, base_artifact: Artifact, candidate_artifact: Artifact, context: ProcessingContext) -> UnifiedDiff:
+    def diff(self, base_artifact: Artifact | None, candidate_artifact: Artifact, context: ProcessingContext) -> UnifiedDiff:
         base = parse_json_artifact(base_artifact.content) if base_artifact is not None else None
         candidate = parse_json_artifact(candidate_artifact.content)
         return _calculate_diff(base, candidate)

@@ -470,7 +470,7 @@ class SubmissionEnrichment:
             diff=(
                 processor.diff(base_artifact, processed.canonical_artifact, context)
                 if operation == "UPDATE"
-                else UnifiedDiff.empty()
+                else processor.diff(None, processed.canonical_artifact, context)
             ),
             validation=validation,
         )
