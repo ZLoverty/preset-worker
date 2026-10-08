@@ -45,9 +45,17 @@ def _flatten(value: Any, path: str = "") -> dict[str, Any]:
 
 
 IMPORTANT_PARAMETER_PATHS = frozenset({
-    "fan_cooling_layer_time",
     "nozzle_temperature",
     "nozzle_temperature_initial_layer",
+    "filament_max_volumetric_speed",
+    "filament_flow_ratio",
+    "chamber_temperatures",
+    "fan_max_speed",
+    "fan_min_speed",
+    "fan_cooling_layer_time",
+    "slow_down_layer_time", 
+    "filament_retraction_length", 
+    "textured_plate_temp", 
 })
 
 SYSTEM_METADATA_PATHS = frozenset({
