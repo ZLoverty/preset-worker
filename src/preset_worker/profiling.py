@@ -41,13 +41,14 @@ class PreviewTiming:
             )
 
     def api(self, *, operation: str, method: str, endpoint: str, duration_ms: float,
-            status: int | str, retry_count: int, succeeded: bool) -> None:
+            status: int | str, retry_count: int, succeeded: bool,
+            request_bytes: int = 0, response_bytes: int = 0) -> None:
         self.api_calls += 1
         self.retry_count += retry_count
         logger.info(
-            "preview_api operation=%s method=%s endpoint=%s duration_ms=%.1f status=%s retry_count=%s retry_backoff_ms=0.0 succeeded=%s submission_id=%s attempt_id=%s",
+            "preview_api operation=%s method=%s endpoint=%s duration_ms=%.1f status=%s retry_count=%s retry_backoff_ms=0.0 succeeded=%s request_bytes=%s response_bytes=%s submission_id=%s attempt_id=%s",
             operation, method, endpoint, duration_ms, status, retry_count,
-            succeeded, self.submission_id, self.attempt_id,
+            succeeded, request_bytes, response_bytes, self.submission_id, self.attempt_id,
         )
 
     def summary(self) -> None:

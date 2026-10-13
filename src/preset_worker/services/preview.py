@@ -56,10 +56,9 @@ class PreviewService:
                 "diff": serialize_unified_diff(candidate.diff),
                 "validation": json.dumps(candidate.validation, ensure_ascii=False),
         }
-        with timing.stage("write_preview_result", summary_key="feishu_write_ms") if timing else nullcontext():
+        fields["status"] = DRAFT_STATUS
+        with timing.stage("write_preview_result_and_status", summary_key="feishu_write_ms") if timing else nullcontext():
             self.client.update_submission(record_id, fields)
-        with timing.stage("write_preview_status", summary_key="feishu_write_ms") if timing else nullcontext():
-            self.client.update_submission(record_id, {"status": DRAFT_STATUS})
 
     def _write_candidate_failure(
         self,
@@ -69,13 +68,15 @@ class PreviewService:
         validation = self._candidate_validation(exc)
         record_id = record["record_id"]
         timing = current_timing()
-        with timing.stage("write_preview_failure", summary_key="feishu_write_ms") if timing else nullcontext():
+        fields = {
+            "validation": json.dumps(validation, ensure_ascii=False),
+            "status": DRAFT_STATUS,
+        }
+        with timing.stage("write_preview_failure_and_status", summary_key="feishu_write_ms") if timing else nullcontext():
             self.client.update_submission(
                 record_id,
-                {"validation": json.dumps(validation, ensure_ascii=False)},
+                fields,
             )
-        with timing.stage("write_preview_failure_status", summary_key="feishu_write_ms") if timing else nullcontext():
-            self.client.update_submission(record_id, {"status": DRAFT_STATUS})
 
     def preview_submission(
         self,

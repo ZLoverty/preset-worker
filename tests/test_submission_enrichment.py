@@ -92,6 +92,21 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         self.assertEqual(client.presets, [])
         self.assertEqual(client.versions, [])
         self.assertEqual(client.submission["fields"]["canonical_json"], [{"file_token": "canonical-1"}])
+        self.assertEqual(len(client.updates), 1)
+
+    def test_preview_upload_failure_does_not_write_success_status(self):
+        client = FakeClient({"name": "new", "version": "1"})
+        client.submission["fields"]["status"] = "PREVIEW_REQUESTED"
+
+        def fail_upload(_filename, _content):
+            raise RuntimeError("upload failed")
+
+        client.upload_attachment = fail_upload
+        with self.assertRaisesRegex(RuntimeError, "upload failed"):
+            PreviewService(client).preview_submission("S123")
+
+        self.assertEqual(client.submission["fields"]["status"], "PREVIEW_REQUESTED")
+        self.assertFalse(client.updates)
 
     def test_preview_update_uses_current_base_without_publication_artifacts(self):
         client = FakeClient({"name": "new", "version": "1", "temperature": "220"})

@@ -71,9 +71,10 @@ def load_env(path: Path = Path(".env")) -> dict[str, str]:
 
 def _api_json(url: str, token: str, *, method: str = "GET", payload: dict | None = None, retry_count: int = 0) -> dict:
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=utf-8"}
+    request_body = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
     request = Request(
         url,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None,
+        data=request_body,
         headers=headers,
         method=method,
     )
@@ -82,7 +83,8 @@ def _api_json(url: str, token: str, *, method: str = "GET", payload: dict | None
     try:
         with urlopen(request, timeout=30) as response:
             status = response.status
-            result = json.loads(response.read().decode("utf-8"))
+            response_body = response.read()
+            result = json.loads(response_body.decode("utf-8"))
     except HTTPError as exc:
         status = exc.code
         detail = exc.read().decode("utf-8", errors="replace").strip()
@@ -95,7 +97,7 @@ def _api_json(url: str, token: str, *, method: str = "GET", payload: dict | None
         path = url.split("?", 1)[0]
         endpoint = "bitable_record" if "/records" in path else "bitable_app" if "/apps/" in path else "tenant_auth" if "/auth/" in path else "feishu_api"
         operation = "update_record" if method == "PUT" else "list_records" if path.endswith("/records") else "authenticate" if "/auth/" in path else "api_request"
-        timing.api(operation=operation, method=method, endpoint=endpoint, duration_ms=(time.perf_counter() - started) * 1000, status=status, retry_count=retry_count, succeeded=succeeded)
+        timing.api(operation=operation, method=method, endpoint=endpoint, duration_ms=(time.perf_counter() - started) * 1000, status=status, retry_count=retry_count, succeeded=succeeded, request_bytes=len(request_body or b""), response_bytes=len(response_body))
     if not succeeded:
         raise RuntimeError(
             f"飞书 API 错误 {result.get('code')}: {result.get('msg')} "
@@ -280,7 +282,7 @@ class FeishuClient:
                 content = response.read()
                 timing = current_timing()
                 if timing:
-                    timing.api(operation="download_attachment", method="GET", endpoint="media_download", duration_ms=(time.perf_counter() - started) * 1000, status=response.status, retry_count=0, succeeded=True)
+                    timing.api(operation="download_attachment", method="GET", endpoint="media_download", duration_ms=(time.perf_counter() - started) * 1000, status=response.status, retry_count=0, succeeded=True, response_bytes=len(content))
                 return content
         except (HTTPError, URLError, TimeoutError) as exc:
             raise RuntimeError(f"下载附件失败: {exc}") from exc
@@ -319,7 +321,8 @@ class FeishuClient:
         started = time.perf_counter()
         try:
             with urlopen(request, timeout=120) as response:
-                result = json.loads(response.read().decode("utf-8"))
+                response_body = response.read()
+                result = json.loads(response_body.decode("utf-8"))
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace").strip()
             raise RuntimeError(f"上传 canonical_json 失败: HTTP {exc.code}: {detail or exc.reason}") from exc
@@ -327,7 +330,7 @@ class FeishuClient:
             raise RuntimeError(f"上传 canonical_json 失败: {exc}") from exc
         timing = current_timing()
         if timing:
-            timing.api(operation="upload_attachment", method="POST", endpoint="media_upload", duration_ms=(time.perf_counter() - started) * 1000, status=response.status, retry_count=0, succeeded=result.get("code", 0) == 0)
+            timing.api(operation="upload_attachment", method="POST", endpoint="media_upload", duration_ms=(time.perf_counter() - started) * 1000, status=response.status, retry_count=0, succeeded=result.get("code", 0) == 0, request_bytes=len(body), response_bytes=len(response_body))
         if result.get("code", 0) != 0:
             raise RuntimeError(f"上传 canonical_json 失败: {result.get('msg')}")
         return result.get("data", {})
