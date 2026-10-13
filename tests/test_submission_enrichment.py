@@ -35,6 +35,7 @@ class FakeClient:
         self.versions = []
         self.updates = []
         self.uploads = []
+        self.downloads = []
 
     def get_submission(self, _submission_id):
         return self.submission
@@ -47,6 +48,7 @@ class FakeClient:
         }[table_id]
 
     def download_attachment(self, attachment):
+        self.downloads.append(attachment["file_token"])
         return self.files[attachment["file_token"]]
 
     def upload_attachment(self, filename, content):
@@ -120,6 +122,18 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         result = SubmissionEnrichment(client).enrich_submission("S123", record=discovered)
 
         self.assertEqual(result.status, "READY_FOR_REVIEW")
+
+    def test_existing_canonical_is_downloaded_before_reference_reuse(self):
+        client = FakeClient({"name": "new", "version": "1"})
+        candidate = SubmissionEnrichment(client).process_candidate(client.submission, "S123")
+        client.submission["fields"]["status"] = "VALIDATING"
+        client.submission["fields"]["canonical_json"] = [{"file_token": "existing"}]
+        client.files["existing"] = candidate.canonical_artifact.content
+
+        SubmissionEnrichment(client).enrich_submission("S123")
+
+        self.assertIn("existing", client.downloads)
+        self.assertFalse(client.uploads)
 
     def test_preview_update_uses_current_base_without_publication_artifacts(self):
         client = FakeClient({"name": "new", "version": "1", "temperature": "220"})
