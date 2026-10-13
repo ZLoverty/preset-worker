@@ -42,7 +42,8 @@ class WorkerRuntime:
         self.client = client
         self.batch_size = batch_size
         self.poll_interval = poll_interval
-        self.preview_service = preview_service or PreviewService(client).preview_submission
+        self._preview_service_object = PreviewService(client) if preview_service is None else None
+        self.preview_service = preview_service or self._preview_service_object.preview_submission
         self.enrichment_service = enrichment_service or SubmissionEnrichment(client).enrich_submission
         self.publication_service = publication_service or SubmissionPublisher(client).publish_submission
         self.stop_event = stop_event or threading.Event()
@@ -88,7 +89,10 @@ class WorkerRuntime:
                 continue
             logger.info("processing started submission=%s action=%s", submission_id, action)
             try:
-                service(str(submission_id))
+                if action == "preview" and self._preview_service_object is not None:
+                    self._preview_service_object.preview_submission(str(submission_id), record=record)
+                else:
+                    service(str(submission_id))
             except Exception:
                 logger.exception("processing failed submission=%s action=%s", submission_id, action)
                 continue

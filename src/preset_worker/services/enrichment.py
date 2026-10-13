@@ -248,6 +248,19 @@ class FeishuClient:
         url = f"{BITABLE_API}/apps/{self.app_token}/tables/{self.submission_table_id}/records/{record_id}"
         self._request_json(url, method="PUT", payload={"fields": fields})
 
+    def get_record(self, table_id: str, record_id: str) -> dict[str, Any]:
+        """Fetch a record by native Bitable record_id only."""
+        url = f"{BITABLE_API}/apps/{self.app_token}/tables/{table_id}/records/{record_id}"
+        return self._request_json(url).get("data", {}).get("record", {})
+
+    def find_preset_by_key(self, preset_key: str) -> list[dict[str, Any]]:
+        """Use an exact server-side filter for the formula-backed key."""
+        escaped = preset_key.replace(chr(34), chr(92) + chr(34))
+        return self.list_records(
+            self.preset_table_id,
+            filter_expression=f'CurrentValue.[preset_key]="{escaped}"',
+        )
+
     def create_record(self, table_id: str, fields: dict[str, Any]) -> dict[str, Any]:
         url = f"{BITABLE_API}/apps/{self.app_token}/tables/{table_id}/records"
         return self._request_json(url, method="POST", payload={"fields": fields}).get("data", {}).get("record", {})
@@ -398,8 +411,13 @@ class SubmissionEnrichment:
         self.processor_registry = processor_registry or default_processor_registry()
 
     def _find_preset(self, preset_key: str) -> dict[str, Any] | None:
+        find_filtered = getattr(self.client, "find_preset_by_key", None)
+        if callable(find_filtered):
+            candidates = list(find_filtered(preset_key))
+        else:
+            candidates = self.client.list_records(self.client.preset_table_id)
         matches = [
-            record for record in self.client.list_records(self.client.preset_table_id)
+            record for record in candidates
             if _lookup_text(record.get("fields", {}).get("preset_key")) == preset_key
         ]
         if len(matches) > 1:

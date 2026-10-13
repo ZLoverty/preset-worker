@@ -77,12 +77,22 @@ class PreviewService:
         with timing.stage("write_preview_failure_status", summary_key="feishu_write_ms") if timing else nullcontext():
             self.client.update_submission(record_id, {"status": DRAFT_STATUS})
 
-    def preview_submission(self, submission_id: str) -> CandidateResult:
+    def preview_submission(
+        self,
+        submission_id: str,
+        *,
+        record: dict[str, Any] | None = None,
+    ) -> CandidateResult:
         """Preview one authoritative PREVIEW_REQUESTED Submission."""
         with preview_timing(submission_id):
             timing = current_timing()
-            with timing.stage("get_submission", summary_key="feishu_read_ms") if timing else nullcontext():
-                record = self.client.get_submission(submission_id)
+            if record is None:
+                with timing.stage("get_submission", summary_key="feishu_read_ms") if timing else nullcontext():
+                    record = self.client.get_submission(submission_id)
+            else:
+                # The polling query already returned this complete record.
+                with timing.stage("reuse_discovered_submission") if timing else nullcontext():
+                    record = record
             fields = record.get("fields", {})
             if fields.get("status") != PREVIEW_REQUESTED_STATUS:
                 raise RuntimeError(
