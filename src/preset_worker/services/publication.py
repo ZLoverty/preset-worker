@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .enrichment import FeishuClient, _attachment_list, _lookup_text, load_env
+from ..profiling import current_timing, lifecycle_timing
 from .projection import ProjectionService
 
 
@@ -80,10 +81,15 @@ class SubmissionPublisher:
         self.client = client
         self.projection_service = projection_service or ProjectionService(client)
 
-    def _find_submission_version(self, submission: dict[str, Any]) -> dict[str, Any] | None:
+    def _find_submission_version(
+        self,
+        submission: dict[str, Any],
+        versions: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any] | None:
         submission_record_id = submission["record_id"]
         submission_id = submission.get("fields", {}).get("submission_id")
-        for version in self.client.list_records(self.client.version_table_id):
+        versions = versions if versions is not None else self.client.list_records(self.client.version_table_id)
+        for version in versions:
             relation = version.get("fields", {}).get("source_submission")
             if submission_record_id in _link_record_ids(relation):
                 return version
@@ -92,13 +98,16 @@ class SubmissionPublisher:
         return None
 
     def _find_preset(self, preset_key: str) -> dict[str, Any] | None:
-        for preset in self.client.list_records(self.client.preset_table_id):
+        find_filtered = getattr(self.client, "find_preset_by_key", None)
+        presets = list(find_filtered(preset_key)) if callable(find_filtered) else self.client.list_records(self.client.preset_table_id)
+        for preset in presets:
             if _lookup_text(preset.get("fields", {}).get("preset_key")) == preset_key:
                 return preset
         return None
 
-    def _find_version(self, version_id: str) -> dict[str, Any] | None:
-        for version in self.client.list_records(self.client.version_table_id):
+    def _find_version(self, version_id: str, versions: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
+        versions = versions if versions is not None else self.client.list_records(self.client.version_table_id)
+        for version in versions:
             if _lookup_text(version.get("fields", {}).get("version_id")) == version_id:
                 return version
         return None
@@ -120,6 +129,7 @@ class SubmissionPublisher:
         submission: dict[str, Any],
         preset: dict[str, Any],
         version: dict[str, Any],
+        versions: list[dict[str, Any]] | None = None,
     ) -> PublicationResult:
         fields = submission.get("fields", {})
         version_fields = version.get("fields", {})
@@ -130,7 +140,7 @@ class SubmissionPublisher:
         if not version_id or version_no is None:
             raise RuntimeError("已有 PresetVersion 缺少 version_id 或 version_no")
 
-        current_no = _version_no(self._find_version(_current_version_text(preset)))
+        current_no = _version_no(self._find_version(_current_version_text(preset), versions))
         current_record_id = _current_version_record_id(preset)
         if current_no is None or current_no <= version_no:
             current_text = _lookup_text(preset.get("fields", {}).get("current_version_no_text"))
@@ -202,16 +212,48 @@ class SubmissionPublisher:
                 result[field] = fields[field]
         return result
 
-    def publish_submission(self, submission_id: str) -> PublicationResult:
-        submission = self.client.get_submission(submission_id)
+    def publish_submission(
+        self,
+        submission_id: str,
+        *,
+        discovered_record: dict[str, Any] | None = None,
+    ) -> PublicationResult:
+        with lifecycle_timing(submission_id, "publish"):
+            return self._publish_submission_timed(submission_id, discovered_record=discovered_record)
+
+    def _publish_submission_timed(
+        self,
+        submission_id: str,
+        *,
+        discovered_record: dict[str, Any] | None = None,
+    ) -> PublicationResult:
+        timing = current_timing()
+        if timing:
+            with timing.stage("get_submission", summary_key="feishu_read_ms"):
+                if discovered_record is not None and callable(getattr(self.client, "get_record", None)):
+                    submission = self.client.get_record(self.client.submission_table_id, discovered_record["record_id"])
+                else:
+                    submission = self.client.get_submission(submission_id)
+        else:
+            if discovered_record is not None and callable(getattr(self.client, "get_record", None)):
+                submission = self.client.get_record(self.client.submission_table_id, discovered_record["record_id"])
+            else:
+                submission = self.client.get_submission(submission_id)
         fields = submission.get("fields", {})
         status = fields.get("status")
-        existing_version = self._find_submission_version(submission)
+        if timing:
+            with timing.stage("version_source_lookup", summary_key="feishu_read_ms"):
+                versions = self.client.list_records(self.client.version_table_id)
+                existing_version = self._find_submission_version(submission, versions)
+        else:
+            versions = self.client.list_records(self.client.version_table_id)
+            existing_version = self._find_submission_version(submission, versions)
         if status == APPROVED and existing_version:
             return self._repair_existing(
                 submission,
                 self._find_preset(_lookup_text(fields.get("preset_key"))) or {},
                 existing_version,
+                versions,
             )
         if status != APPROVING:
             raise RuntimeError(f"Submission {submission_id} 状态不是 APPROVING: {status}")
@@ -220,12 +262,16 @@ class SubmissionPublisher:
         if not preset_key:
             raise RuntimeError("Submission 缺少 preset_key")
 
-        preset = self._find_preset(preset_key)
+        if timing:
+            with timing.stage("preset_lookup", summary_key="feishu_read_ms"):
+                preset = self._find_preset(preset_key)
+        else:
+            preset = self._find_preset(preset_key)
         operation = fields.get("operation")
         if existing_version:
             if not preset:
                 raise PublicationConflict("已有 PresetVersion，但找不到对应 Preset")
-            return self._repair_existing(submission, preset, existing_version)
+            return self._repair_existing(submission, preset, existing_version, versions)
 
         if operation == "UPDATE":
             if not preset:
@@ -235,7 +281,7 @@ class SubmissionPublisher:
             if base_version != current_version:
                 self.client.update_submission(submission["record_id"], {"status": VERSION_CONFLICT})
                 raise PublicationConflict(f"版本冲突: base={base_version}, current={current_version}")
-            current_version_record = self._find_version(current_version)
+            current_version_record = self._find_version(current_version, versions)
             current_no = _version_no(current_version_record)
             if current_no is None:
                 raise RuntimeError(f"当前版本缺少 version_no: {current_version}")

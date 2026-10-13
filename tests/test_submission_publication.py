@@ -42,12 +42,17 @@ class FakeClient:
         self.files = {"canonical": b'{"version":"1","name":"X"}'}
         self.created = []
         self.updates = []
+        self.list_calls = []
         self.fail_preset_update = False
 
     def get_submission(self, _submission_id):
         return self.submission
 
+    def get_record(self, _table_id, _record_id):
+        return self.submission
+
     def list_records(self, table_id):
+        self.list_calls.append(table_id)
         return {self.preset_table_id: self.presets, self.version_table_id: self.versions}[table_id]
 
     def create_record(self, table_id, fields):
@@ -84,6 +89,17 @@ class SubmissionPublicationTests(unittest.TestCase):
         self.assertEqual(len(client.versions), 1)
         self.assertEqual(client.versions[0]["fields"]["preset_key"], ["preset-new-0"])
 
+    def test_discovered_record_uses_authoritative_native_refresh(self):
+        client = FakeClient("CREATE")
+        client.get_submission = lambda _submission_id: (_ for _ in ()).throw(AssertionError("scan should not be used"))
+
+        result = SubmissionPublisher(client).publish_submission(
+            "S1",
+            discovered_record=client.submission,
+        )
+
+        self.assertEqual(result.version_id, "X@v1")
+
     def test_update(self):
         client = FakeClient("UPDATE")
         client.submission["fields"]["base_version_id"] = "X@v7"
@@ -97,6 +113,7 @@ class SubmissionPublicationTests(unittest.TestCase):
         self.assertEqual(client.submission["fields"]["published_version_id"], "X@v8")
         self.assertEqual(client.presets[0]["fields"]["current_version_no_text"], "v8")
         self.assertEqual(client.versions[-1]["fields"]["preset_key"], ["preset-1"])
+        self.assertEqual(client.list_calls.count(client.version_table_id), 1)
 
     def test_metadata_snapshot(self):
         client = FakeClient()

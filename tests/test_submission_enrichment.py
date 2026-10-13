@@ -108,6 +108,19 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         self.assertEqual(client.submission["fields"]["status"], "PREVIEW_REQUESTED")
         self.assertFalse(client.updates)
 
+    def test_validation_can_reuse_discovered_submission_record(self):
+        client = FakeClient({"name": "new", "version": "1"})
+        client.submission["fields"]["status"] = "VALIDATING"
+        discovered = client.submission
+
+        def fail_get(_submission_id):
+            raise AssertionError("validation should reuse the discovered record")
+
+        client.get_submission = fail_get
+        result = SubmissionEnrichment(client).enrich_submission("S123", record=discovered)
+
+        self.assertEqual(result.status, "READY_FOR_REVIEW")
+
     def test_preview_update_uses_current_base_without_publication_artifacts(self):
         client = FakeClient({"name": "new", "version": "1", "temperature": "220"})
         client.submission["fields"]["status"] = "PREVIEW_REQUESTED"

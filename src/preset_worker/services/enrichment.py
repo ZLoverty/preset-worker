@@ -22,7 +22,7 @@ from ..slicers import Artifact, ProcessingContext, SlicerProcessorRegistry, proc
 from ..slicers.registry import default_processor_registry
 from ..diff import UnifiedDiff, deserialize_unified_diff, serialize_unified_diff
 from ..slicers.contracts import UnsupportedSlicerError
-from ..profiling import current_timing
+from ..profiling import current_timing, lifecycle_timing
 
 
 def _timed_download(client: Any, attachment: dict[str, Any], stage: str) -> bytes:
@@ -566,8 +566,31 @@ class SubmissionEnrichment:
             raise RuntimeError("上传 canonical_json 后没有返回 file_token")
         return file_token
 
-    def enrich_submission(self, submission_id: str) -> EnrichmentResult:
-        record = self.client.get_submission(submission_id)
+    def enrich_submission(
+        self,
+        submission_id: str,
+        *,
+        record: dict[str, Any] | None = None,
+    ) -> EnrichmentResult:
+        with lifecycle_timing(submission_id, "enrich"):
+            return self._enrich_submission_timed(submission_id, record=record)
+
+    def _enrich_submission_timed(
+        self,
+        submission_id: str,
+        *,
+        record: dict[str, Any] | None = None,
+    ) -> EnrichmentResult:
+        timing = current_timing()
+        if record is None:
+            if timing:
+                with timing.stage("get_submission", summary_key="feishu_read_ms"):
+                    record = self.client.get_submission(submission_id)
+            else:
+                record = self.client.get_submission(submission_id)
+        elif timing:
+            with timing.stage("reuse_discovered_submission"):
+                record = record
         fields = record.get("fields", {})
         if fields.get("status") == "READY_FOR_REVIEW":
             return self._frozen_result(record)
@@ -576,7 +599,11 @@ class SubmissionEnrichment:
                 f"Submission is {fields.get('status', 'unknown')} and is not eligible for formal enrichment."
             )
         try:
-            candidate = self.process_candidate(record, submission_id)
+            if timing:
+                with timing.stage("candidate_processing"):
+                    candidate = self.process_candidate(record, submission_id)
+            else:
+                candidate = self.process_candidate(record, submission_id)
         except ValidationFailure as exc:
             self.client.update_submission(record["record_id"], {"validation": json.dumps(exc.validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
             raise
@@ -588,11 +615,13 @@ class SubmissionEnrichment:
             validation = {"valid": False, "errors": [str(exc)], "warnings": []}
             self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
             raise
-        file_token = self._canonical_attachment(record, submission_id, candidate.canonical_artifact)
+        if timing:
+            with timing.stage("canonical_attachment"):
+                file_token = self._canonical_attachment(record, submission_id, candidate.canonical_artifact)
+        else:
+            file_token = self._canonical_attachment(record, submission_id, candidate.canonical_artifact)
         result = EnrichmentResult(**candidate.__dict__, status="READY_FOR_REVIEW")
-        self.client.update_submission(
-            record["record_id"],
-            {
+        result_fields = {
                 "operation": result.operation,
                 "base_version_id": [candidate.base_version_record_id]
                 if candidate.base_version_record_id
@@ -602,8 +631,12 @@ class SubmissionEnrichment:
                 "diff": serialize_unified_diff(result.diff),
                 "validation": json.dumps(result.validation, ensure_ascii=False),
                 "status": result.status,
-            },
-        )
+        }
+        if timing:
+            with timing.stage("write_enrichment_result", summary_key="feishu_write_ms"):
+                self.client.update_submission(record["record_id"], result_fields)
+        else:
+            self.client.update_submission(record["record_id"], result_fields)
         return result
 
     def backfill_base_version_no_text(self, *, limit: int | None = None) -> dict[str, int]:
