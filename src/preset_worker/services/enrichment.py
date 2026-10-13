@@ -22,6 +22,23 @@ from ..slicers import Artifact, ProcessingContext, SlicerProcessorRegistry, proc
 from ..slicers.registry import default_processor_registry
 from ..diff import UnifiedDiff, deserialize_unified_diff, serialize_unified_diff
 from ..slicers.contracts import UnsupportedSlicerError
+from ..profiling import current_timing
+
+
+def _timed_download(client: Any, attachment: dict[str, Any], stage: str) -> bytes:
+    timing = current_timing()
+    if timing:
+        with timing.stage(stage, summary_key="attachment_download_ms"):
+            return client.download_attachment(attachment)
+    return client.download_attachment(attachment)
+
+
+def _timed_diff(processor: Any, base: Artifact | None, candidate: Artifact, context: ProcessingContext, *, operation: str) -> UnifiedDiff:
+    timing = current_timing()
+    if timing:
+        with timing.stage(operation, summary_key="diff_ms"):
+            return processor.diff(base, candidate, context)
+    return processor.diff(base, candidate, context)
 
 
 AUTH_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
@@ -52,7 +69,7 @@ def load_env(path: Path = Path(".env")) -> dict[str, str]:
     return values
 
 
-def _api_json(url: str, token: str, *, method: str = "GET", payload: dict | None = None) -> dict:
+def _api_json(url: str, token: str, *, method: str = "GET", payload: dict | None = None, retry_count: int = 0) -> dict:
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=utf-8"}
     request = Request(
         url,
@@ -60,15 +77,26 @@ def _api_json(url: str, token: str, *, method: str = "GET", payload: dict | None
         headers=headers,
         method=method,
     )
+    started = time.perf_counter()
+    status: int | str = "error"
     try:
         with urlopen(request, timeout=30) as response:
+            status = response.status
             result = json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
+        status = exc.code
         detail = exc.read().decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"飞书 API 请求失败: {method} {url} -> HTTP {exc.code}: {detail or exc.reason}") from exc
     except (URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"飞书 API 请求失败: {method} {url}: {exc}") from exc
-    if result.get("code", 0) != 0:
+    succeeded = result.get("code", 0) == 0
+    timing = current_timing()
+    if timing:
+        path = url.split("?", 1)[0]
+        endpoint = "bitable_record" if "/records" in path else "bitable_app" if "/apps/" in path else "tenant_auth" if "/auth/" in path else "feishu_api"
+        operation = "update_record" if method == "PUT" else "list_records" if path.endswith("/records") else "authenticate" if "/auth/" in path else "api_request"
+        timing.api(operation=operation, method=method, endpoint=endpoint, duration_ms=(time.perf_counter() - started) * 1000, status=status, retry_count=retry_count, succeeded=succeeded)
+    if not succeeded:
         raise RuntimeError(
             f"飞书 API 错误 {result.get('code')}: {result.get('msg')} "
             f"({method} {url})"
@@ -154,6 +182,9 @@ class FeishuClient:
             detail = str(exc)
             if "99991663" not in detail and "Invalid access token" not in detail:
                 raise
+            timing = current_timing()
+            if timing:
+                timing.retry_count += 1
             self._authenticate()
             return _api_json(url, self.token, method=method, payload=payload)
 
@@ -230,9 +261,14 @@ class FeishuClient:
         if not url:
             raise RuntimeError("附件缺少下载地址或 file_token")
         request = Request(url, headers={"Authorization": f"Bearer {self.token}"})
+        started = time.perf_counter()
         try:
             with urlopen(request, timeout=120) as response:
-                return response.read()
+                content = response.read()
+                timing = current_timing()
+                if timing:
+                    timing.api(operation="download_attachment", method="GET", endpoint="media_download", duration_ms=(time.perf_counter() - started) * 1000, status=response.status, retry_count=0, succeeded=True)
+                return content
         except (HTTPError, URLError, TimeoutError) as exc:
             raise RuntimeError(f"下载附件失败: {exc}") from exc
 
@@ -267,6 +303,7 @@ class FeishuClient:
             },
             method="POST",
         )
+        started = time.perf_counter()
         try:
             with urlopen(request, timeout=120) as response:
                 result = json.loads(response.read().decode("utf-8"))
@@ -275,6 +312,9 @@ class FeishuClient:
             raise RuntimeError(f"上传 canonical_json 失败: HTTP {exc.code}: {detail or exc.reason}") from exc
         except (URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"上传 canonical_json 失败: {exc}") from exc
+        timing = current_timing()
+        if timing:
+            timing.api(operation="upload_attachment", method="POST", endpoint="media_upload", duration_ms=(time.perf_counter() - started) * 1000, status=response.status, retry_count=0, succeeded=result.get("code", 0) == 0)
         if result.get("code", 0) != 0:
             raise RuntimeError(f"上传 canonical_json 失败: {result.get('msg')}")
         return result.get("data", {})
@@ -385,7 +425,7 @@ class SubmissionEnrichment:
         if not attachments:
             raise RuntimeError(f"base version 没有 canonical_json: {base_version_id}")
         attachment = attachments[0]
-        content = self.client.download_attachment(attachment)
+        content = _timed_download(self.client, attachment, "base_attachment_download")
         filename = str(attachment.get("name") or attachment.get("file_name") or f"{base_version_id}.artifact")
         media_type = attachment.get("type") or attachment.get("mime_type")
         return base_version_id, version.get("record_id") or version.get("id"), base_version_no_text, Artifact(
@@ -430,7 +470,7 @@ class SubmissionEnrichment:
             raise ValidationFailure({"valid": False, "errors": ["Submission 缺少 uploaded_json 附件"], "warnings": []})
         uploaded_attachment = attachments[0]
         artifact = Artifact(
-            content=self.client.download_attachment(uploaded_attachment),
+            content=_timed_download(self.client, uploaded_attachment, "uploaded_attachment_download"),
             filename=str(uploaded_attachment.get("name") or uploaded_attachment.get("file_name") or f"{submission_id}.artifact"),
             media_type=uploaded_attachment.get("type") or uploaded_attachment.get("mime_type"),
         )
@@ -445,8 +485,13 @@ class SubmissionEnrichment:
             slicer=slicer,
             pm_method_version=pm_method_version,
         )
+        timing = current_timing()
         try:
-            processed = process_artifact(processor, artifact, context)
+            if timing:
+                with timing.stage("processor", summary_key="processor_ms"):
+                    processed = process_artifact(processor, artifact, context)
+            else:
+                processed = process_artifact(processor, artifact, context)
         except ValueError as exc:
             validation = getattr(exc, "validation", None)
             if validation is not None:
@@ -455,7 +500,11 @@ class SubmissionEnrichment:
         validation = processed.validation_result.as_dict()
         if not processed.validation_result.valid:
             raise ValidationFailure(validation)
-        preset = self._find_preset(preset_key)
+        if timing:
+            with timing.stage("preset_lookup", summary_key="feishu_read_ms"):
+                preset = self._find_preset(preset_key)
+        else:
+            preset = self._find_preset(preset_key)
         operation = "UPDATE" if preset else "CREATE"
         base_version_id, base_version_record_id, base_version_no_text, base_artifact = (
             self._base_artifact(preset) if preset else ("", None, "", None)
@@ -468,9 +517,9 @@ class SubmissionEnrichment:
             base_version_no_text=base_version_no_text,
             canonical_artifact=processed.canonical_artifact,
             diff=(
-                processor.diff(base_artifact, processed.canonical_artifact, context)
+                _timed_diff(processor, base_artifact, processed.canonical_artifact, context, operation="diff_update")
                 if operation == "UPDATE"
-                else processor.diff(None, processed.canonical_artifact, context)
+                else _timed_diff(processor, None, processed.canonical_artifact, context, operation="diff_create")
             ),
             validation=validation,
         )
@@ -479,13 +528,18 @@ class SubmissionEnrichment:
         fields = record.get("fields", {})
         existing_canonical = _attachment_list(fields.get("canonical_json"))
         if existing_canonical:
-            existing = self.client.download_attachment(existing_canonical[0])
+            existing = _timed_download(self.client, existing_canonical[0], "existing_canonical_download")
             if existing == canonical_artifact.content:
                 file_token = existing_canonical[0].get("file_token") or existing_canonical[0].get("token")
                 if file_token:
                     return file_token
         filename = canonical_artifact.filename or f"{submission_id}.artifact"
-        uploaded_file = self.client.upload_attachment(filename, canonical_artifact.content)
+        timing = current_timing()
+        if timing:
+            with timing.stage("canonical_attachment_upload", summary_key="attachment_upload_ms"):
+                uploaded_file = self.client.upload_attachment(filename, canonical_artifact.content)
+        else:
+            uploaded_file = self.client.upload_attachment(filename, canonical_artifact.content)
         file_token = uploaded_file.get("file_token") or uploaded_file.get("token")
         if not file_token:
             raise RuntimeError("上传 canonical_json 后没有返回 file_token")
