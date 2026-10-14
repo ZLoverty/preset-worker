@@ -8,6 +8,7 @@ the same Submission.
 from __future__ import annotations
 
 import json
+import logging
 import mimetypes
 import time
 import uuid
@@ -23,6 +24,9 @@ from ..slicers.registry import default_processor_registry
 from ..diff import UnifiedDiff, deserialize_unified_diff, serialize_unified_diff
 from ..slicers.contracts import UnsupportedSlicerError
 from ..profiling import current_timing, lifecycle_timing
+
+
+logger = logging.getLogger(__name__)
 
 
 def _timed_download(client: Any, attachment: dict[str, Any], stage: str) -> bytes:
@@ -175,20 +179,39 @@ class FeishuClient:
         method: str = "GET",
         payload: dict | None = None,
     ) -> dict:
-        """Call Feishu with proactive refresh and one invalid-token retry."""
+        """Call Feishu with token refresh and bounded transient retries."""
         if time.monotonic() >= self._token_refresh_at:
             self._authenticate()
-        try:
-            return _api_json(url, self.token, method=method, payload=payload)
-        except RuntimeError as exc:
-            detail = str(exc)
-            if "99991663" not in detail and "Invalid access token" not in detail:
-                raise
-            timing = current_timing()
-            if timing:
-                timing.retry_count += 1
-            self._authenticate()
-            return _api_json(url, self.token, method=method, payload=payload)
+        token_retry = False
+        transient_attempt = 0
+        while True:
+            try:
+                return _api_json(url, self.token, method=method, payload=payload)
+            except RuntimeError as exc:
+                detail = str(exc)
+                invalid_token = "99991663" in detail or "Invalid access token" in detail
+                transient = any(marker in detail for marker in (
+                    "timed out", "timeout", "HTTP 408", "HTTP 429", "HTTP 500",
+                    "HTTP 502", "HTTP 503", "HTTP 504", "暂时不可用",
+                ))
+                if invalid_token and not token_retry:
+                    token_retry = True
+                    timing = current_timing()
+                    if timing:
+                        timing.retry_count += 1
+                    self._authenticate()
+                    continue
+                if not transient or transient_attempt >= 3:
+                    raise
+                transient_attempt += 1
+                logger.warning(
+                    "transient Feishu request failure attempt=%d/3 method=%s url=%s error=%s",
+                    transient_attempt,
+                    method,
+                    url,
+                    detail,
+                )
+                time.sleep(min(2 ** (transient_attempt - 1), 8))
 
     def list_records(
         self,
