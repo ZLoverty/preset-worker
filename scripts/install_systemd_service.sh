@@ -7,7 +7,7 @@ DEFAULT_PROJECT_DIR=$(cd -- "${SCRIPT_DIR}/.." && pwd)
 
 PROJECT_DIR=${DEFAULT_PROJECT_DIR}
 SERVICE_NAME="preset-worker"
-SERVICE_USER="preset-worker"
+SERVICE_USER=""
 SERVICE_GROUP=""
 ENV_FILE=""
 VENV_DIR=""
@@ -25,8 +25,8 @@ Install or update a systemd service for `preset-worker run`.
 Options:
   --project-dir DIR   Repository directory (default: repository root)
   --service-name NAME systemd unit name (default: preset-worker)
-  --user USER         Service user (default: preset-worker)
-  --group GROUP       Service group (default: same as --user)
+  --user USER         Service user (default: invoking user)
+  --group GROUP       Service group (default: user's primary group)
   --env-file FILE     Worker .env file (default: PROJECT_DIR/.env)
   --venv-dir DIR      Python virtual environment (default: PROJECT_DIR/.venv)
   --python PATH       Python executable used to create the venv (default: python3)
@@ -35,8 +35,9 @@ Options:
   --start             Start/restart the service after installation
   -h, --help          Show this help
 
-The script must be run as root (for example: sudo ...). It does not create or
-modify the worker .env file.
+The script must be run as root (for example: sudo ...). When invoked through
+sudo, the service defaults to the original invoking user. It does not create
+or modify the worker .env file.
 EOF
 }
 
@@ -115,15 +116,24 @@ require_command systemctl
 require_command install
 require_command id
 require_command getent
-require_command groupadd
-require_command useradd
+require_command runuser
+require_command stat
 require_command "$PYTHON_BIN"
 
 PROJECT_DIR=$(cd -- "$PROJECT_DIR" 2>/dev/null && pwd) || die "project directory does not exist"
 [[ -f "$PROJECT_DIR/pyproject.toml" ]] || die "pyproject.toml not found in $PROJECT_DIR"
 
+if [[ -z "$SERVICE_USER" ]]; then
+    SERVICE_USER=${SUDO_USER:-}
+    if [[ -z "$SERVICE_USER" || "$SERVICE_USER" == "root" ]]; then
+        SERVICE_USER=$(stat -c '%U' "$PROJECT_DIR")
+    fi
+    [[ -n "$SERVICE_USER" && "$SERVICE_USER" != "root" ]] \
+        || die "cannot determine a non-root service user; pass --user USER explicitly"
+fi
 if [[ -z "$SERVICE_GROUP" ]]; then
-    SERVICE_GROUP=$SERVICE_USER
+    SERVICE_GROUP=$(id -gn "$SERVICE_USER") \
+        || die "cannot determine primary group for service user: $SERVICE_USER"
 fi
 if [[ -z "$ENV_FILE" ]]; then
     ENV_FILE="$PROJECT_DIR/.env"
@@ -135,19 +145,8 @@ fi
 ENV_FILE=$(readlink -f -- "$ENV_FILE" 2>/dev/null || true)
 [[ -n "$ENV_FILE" && -f "$ENV_FILE" ]] || die ".env file not found: ${ENV_FILE:-unset}"
 
-if ! getent group "$SERVICE_GROUP" >/dev/null 2>&1; then
-    [[ "$SERVICE_USER" == "preset-worker" && "$SERVICE_GROUP" == "preset-worker" ]] \
-        || die "service group does not exist: $SERVICE_GROUP"
-    echo "creating system group: $SERVICE_GROUP"
-    groupadd --system "$SERVICE_GROUP"
-fi
-if ! id "$SERVICE_USER" >/dev/null 2>&1; then
-    [[ "$SERVICE_USER" == "preset-worker" ]] \
-        || die "service user does not exist: $SERVICE_USER"
-    echo "creating system user: $SERVICE_USER"
-    useradd --system --gid "$SERVICE_GROUP" --home-dir /nonexistent \
-        --shell /usr/sbin/nologin "$SERVICE_USER"
-fi
+id "$SERVICE_USER" >/dev/null 2>&1 || die "service user does not exist: $SERVICE_USER"
+getent group "$SERVICE_GROUP" >/dev/null 2>&1 || die "service group does not exist: $SERVICE_GROUP"
 
 if [[ ! -x "$VENV_DIR/bin/python" ]]; then
     echo "creating virtual environment: $VENV_DIR"
@@ -160,6 +159,13 @@ if [[ "$SKIP_INSTALL" -eq 0 ]]; then
 fi
 
 [[ -x "$VENV_DIR/bin/preset-worker" ]] || die "preset-worker executable not found in $VENV_DIR/bin"
+
+runuser -u "$SERVICE_USER" -- test -x "$PROJECT_DIR" \
+    || die "service user '$SERVICE_USER' cannot access project directory '$PROJECT_DIR'; use --user with an account that can traverse its parent directories, or deploy under /opt"
+runuser -u "$SERVICE_USER" -- test -r "$ENV_FILE" \
+    || die "service user '$SERVICE_USER' cannot read env file '$ENV_FILE'"
+runuser -u "$SERVICE_USER" -- test -x "$VENV_DIR/bin/preset-worker" \
+    || die "service user '$SERVICE_USER' cannot execute '$VENV_DIR/bin/preset-worker'"
 
 install -d -m 0755 /etc/systemd/system
 UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"

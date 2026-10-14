@@ -71,7 +71,19 @@ sudo systemctl enable --now preset-worker.service
 sudo journalctl -u preset-worker.service -f
 ```
 
-The installer creates or reuses `.venv`, installs the package in editable mode,
-and writes `/etc/systemd/system/preset-worker.service`. Use `--user`,
-`--env-file`, or `--venv-dir` to customize the deployment; use `--start` to
-enable and restart the service as part of installation.
+When run through `sudo`, the installer runs the service as the original
+invoking user, so a project under that user's home directory is accessible.
+It creates or reuses `.venv`, installs the package in editable mode, and writes
+`/etc/systemd/system/preset-worker.service`. Use `--user`, `--env-file`, or
+`--venv-dir` to customize the deployment; use `--start` to enable and restart
+the service as part of installation.
+
+The service user must be able to traverse the project directory and read the
+`.env` file. For a project under a private home directory, either deploy it
+under `/opt/preset-worker` or install with an existing account that has access:
+
+```bash
+sudo bash scripts/install_systemd_service.sh --project-dir /opt/preset-worker
+# or, if the project remains in /home/deploy/preset-worker:
+sudo bash scripts/install_systemd_service.sh --user deploy --group deploy
+```
