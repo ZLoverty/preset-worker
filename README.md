@@ -61,3 +61,17 @@ GitHub metadata is cached locally in `.cache/slicer-version-github.json` for
 `--refresh-cache` to reload it, or `--no-cache` to disable local caching.
 Use `--refresh-repository owner/repo` to refresh only one repository while
 preserving the other cached repositories.
+
+Install a Linux systemd service from the repository root (the script must run
+as root and expects an existing `.env` file):
+
+```bash
+sudo bash scripts/install_systemd_service.sh
+sudo systemctl enable --now preset-worker.service
+sudo journalctl -u preset-worker.service -f
+```
+
+The installer creates or reuses `.venv`, installs the package in editable mode,
+and writes `/etc/systemd/system/preset-worker.service`. Use `--user`,
+`--env-file`, or `--venv-dir` to customize the deployment; use `--start` to
+enable and restart the service as part of installation.
