@@ -6,8 +6,8 @@ from preset_worker.services.enrichment import (
     SubmissionEnrichment,
     UnsupportedSlicerError,
     ValidationFailure,
-    calculate_diff,
 )
+from preset_worker.slicers.bambu_studio import calculate_diff
 from preset_worker.services.preview import PreviewService
 
 
@@ -35,6 +35,7 @@ class FakeClient:
         self.versions = []
         self.updates = []
         self.uploads = []
+        self.downloads = []
 
     def get_submission(self, _submission_id):
         return self.submission
@@ -47,6 +48,7 @@ class FakeClient:
         }[table_id]
 
     def download_attachment(self, attachment):
+        self.downloads.append(attachment["file_token"])
         return self.files[attachment["file_token"]]
 
     def upload_attachment(self, filename, content):
@@ -92,6 +94,46 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         self.assertEqual(client.presets, [])
         self.assertEqual(client.versions, [])
         self.assertEqual(client.submission["fields"]["canonical_json"], [{"file_token": "canonical-1"}])
+        self.assertEqual(len(client.updates), 1)
+
+    def test_preview_upload_failure_does_not_write_success_status(self):
+        client = FakeClient({"name": "new", "version": "1"})
+        client.submission["fields"]["status"] = "PREVIEW_REQUESTED"
+
+        def fail_upload(_filename, _content):
+            raise RuntimeError("upload failed")
+
+        client.upload_attachment = fail_upload
+        with self.assertRaisesRegex(RuntimeError, "upload failed"):
+            PreviewService(client).preview_submission("S123")
+
+        self.assertEqual(client.submission["fields"]["status"], "PREVIEW_REQUESTED")
+        self.assertFalse(client.updates)
+
+    def test_validation_can_reuse_discovered_submission_record(self):
+        client = FakeClient({"name": "new", "version": "1"})
+        client.submission["fields"]["status"] = "VALIDATING"
+        discovered = client.submission
+
+        def fail_get(_submission_id):
+            raise AssertionError("validation should reuse the discovered record")
+
+        client.get_submission = fail_get
+        result = SubmissionEnrichment(client).enrich_submission("S123", record=discovered)
+
+        self.assertEqual(result.status, "READY_FOR_REVIEW")
+
+    def test_existing_canonical_is_downloaded_before_reference_reuse(self):
+        client = FakeClient({"name": "new", "version": "1"})
+        candidate = SubmissionEnrichment(client).process_candidate(client.submission, "S123")
+        client.submission["fields"]["status"] = "VALIDATING"
+        client.submission["fields"]["canonical_json"] = [{"file_token": "existing"}]
+        client.files["existing"] = candidate.canonical_artifact.content
+
+        SubmissionEnrichment(client).enrich_submission("S123")
+
+        self.assertIn("existing", client.downloads)
+        self.assertFalse(client.uploads)
 
     def test_preview_update_uses_current_base_without_publication_artifacts(self):
         client = FakeClient({"name": "new", "version": "1", "temperature": "220"})
@@ -112,7 +154,7 @@ class SubmissionEnrichmentTests(unittest.TestCase):
 
         self.assertEqual(result.operation, "UPDATE")
         self.assertEqual(result.base_version_id, "P42@v7")
-        self.assertEqual(result.diff["modified"][0]["path"], "name")
+        self.assertEqual(result.diff.changes[0].path, "name")
         self.assertEqual(client.submission["fields"]["status"], "DRAFT")
         self.assertEqual(client.presets[0]["fields"]["current_version_id"][0]["text"], "P42@v7")
 
@@ -149,7 +191,7 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         )
         preview = PreviewService(preview_client).preview_submission("S123")
 
-        self.assertEqual(preview.canonical_json, formal.canonical_json)
+        self.assertEqual(preview.canonical_artifact.content, formal.canonical_artifact.content)
         self.assertEqual(preview.diff, formal.diff)
 
     def test_create(self):
@@ -157,10 +199,14 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         result = SubmissionEnrichment(client).enrich_submission("S123")
         self.assertEqual(result.operation, "CREATE")
         self.assertEqual(result.base_version_id, "")
+        self.assertIsNone(result.base_version_record_id)
         self.assertEqual(result.base_version_no_text, "")
+        self.assertTrue(result.diff.changes)
+        self.assertTrue(all(change.change_type.value == "ADDED" for change in result.diff.changes))
         self.assertEqual(result.status, "READY_FOR_REVIEW")
-        self.assertEqual(result.canonical_json["name"], "L2002CF @BBL P2S")
-        self.assertEqual(result.canonical_json["pm_method_version"], "2.1")
+        canonical = json.loads(result.canonical_artifact.content)
+        self.assertEqual(canonical["name"], "L2002CF @BBL P2S")
+        self.assertEqual(canonical["pm_method_version"], "2.1")
         self.assertEqual(client.uploads[0][0], "L2002CF @BBL P2S.json")
 
     def test_formula_preset_key_is_read_but_not_written(self):
@@ -182,7 +228,7 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         self.assertEqual(result.operation, "UPDATE")
         self.assertEqual(result.base_version_id, "P42@v7")
         self.assertEqual(result.base_version_no_text, "7")
-        self.assertEqual(result.diff["modified"][0]["path"], "name")
+        self.assertEqual(result.diff.changes[0].path, "name")
 
     def test_formal_enrichment_writes_base_pair_together(self):
         client = FakeClient({"name": "new", "version": "1", "temperature": "220"})
@@ -242,9 +288,12 @@ class SubmissionEnrichmentTests(unittest.TestCase):
 
     def test_diff(self):
         diff = calculate_diff({"a": 1, "old": True}, {"a": 2, "new": False})
-        self.assertEqual(diff["modified"], [{"path": "a", "old": 1, "new": 2}])
-        self.assertEqual(diff["added"], [{"path": "new", "new": False}])
-        self.assertEqual(diff["removed"], [{"path": "old", "old": True}])
+        self.assertEqual(diff.changes[0].path, "a")
+        self.assertEqual(diff.changes[0].change_type.value, "MODIFIED")
+        self.assertEqual(diff.changes[1].path, "new")
+        self.assertEqual(diff.changes[1].change_type.value, "ADDED")
+        self.assertEqual(diff.changes[2].path, "old")
+        self.assertEqual(diff.changes[2].change_type.value, "REMOVED")
 
     def test_rerun_does_not_create_preset_or_version(self):
         client = FakeClient({"name": "same", "version": "1"})
@@ -258,7 +307,7 @@ class SubmissionEnrichmentTests(unittest.TestCase):
 
     def test_unsupported_slicer(self):
         client = FakeClient({"name": "same", "version": "1"})
-        client.submission["fields"]["slicer"] = [{"text": "OrcaSlicer"}]
+        client.submission["fields"]["slicer"] = [{"text": "Cura"}]
         with self.assertRaises(UnsupportedSlicerError):
             SubmissionEnrichment(client).enrich_submission("S123")
         self.assertEqual(client.updates[-1]["status"], "VALIDATION_FAILED")

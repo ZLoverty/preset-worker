@@ -47,6 +47,24 @@ class FeishuAuthTests(unittest.TestCase):
 
         self.assertEqual([call[1] for call in calls], ["", "fresh-token"])
 
+    def test_transient_timeout_is_retried(self):
+        client = object.__new__(FeishuClient)
+        client.token = "token"
+        client._token_refresh_at = 10**30
+        calls = []
+
+        def fake_api(url, token, *, method="GET", payload=None):
+            calls.append((url, token))
+            if len(calls) < 3:
+                raise RuntimeError("椋炰功 API 璇锋眰澶辫触: The read operation timed out")
+            return {"code": 0, "data": {"ok": True}}
+
+        with patch.object(enrichment, "_api_json", side_effect=fake_api), patch.object(enrichment.time, "sleep"):
+            result = client._request_json("https://example.test/records")
+
+        self.assertTrue(result["data"]["ok"])
+        self.assertEqual(len(calls), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

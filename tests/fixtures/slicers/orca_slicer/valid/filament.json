@@ -1,0 +1,14 @@
+{
+  "type": "filament",
+  "name": "Generic PLA",
+  "from": "user",
+  "instantiation": "true",
+  "inherits": "fdm_filament_pla",
+  "filament_vendor": "Generic",
+  "filament_type": ["PLA"],
+  "filament_flow_ratio": ["0.98"],
+  "filament_max_volumetric_speed": ["20"],
+  "filament_settings_id": ["Generic PLA"],
+  "compatible_printers": [],
+  "future_unknown_field": "preserve-me"
+}

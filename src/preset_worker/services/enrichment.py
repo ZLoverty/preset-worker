@@ -8,8 +8,8 @@ the same Submission.
 from __future__ import annotations
 
 import json
+import logging
 import mimetypes
-import copy
 import time
 import uuid
 from dataclasses import dataclass
@@ -18,6 +18,31 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+
+from ..slicers import Artifact, ProcessingContext, SlicerProcessorRegistry, process_artifact
+from ..slicers.registry import default_processor_registry
+from ..diff import UnifiedDiff, deserialize_unified_diff, serialize_unified_diff
+from ..slicers.contracts import UnsupportedSlicerError
+from ..profiling import current_timing, lifecycle_timing
+
+
+logger = logging.getLogger(__name__)
+
+
+def _timed_download(client: Any, attachment: dict[str, Any], stage: str) -> bytes:
+    timing = current_timing()
+    if timing:
+        with timing.stage(stage, summary_key="attachment_download_ms"):
+            return client.download_attachment(attachment)
+    return client.download_attachment(attachment)
+
+
+def _timed_diff(processor: Any, base: Artifact | None, candidate: Artifact, context: ProcessingContext, *, operation: str) -> UnifiedDiff:
+    timing = current_timing()
+    if timing:
+        with timing.stage(operation, summary_key="diff_ms"):
+            return processor.diff(base, candidate, context)
+    return processor.diff(base, candidate, context)
 
 
 AUTH_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
@@ -48,23 +73,36 @@ def load_env(path: Path = Path(".env")) -> dict[str, str]:
     return values
 
 
-def _api_json(url: str, token: str, *, method: str = "GET", payload: dict | None = None) -> dict:
+def _api_json(url: str, token: str, *, method: str = "GET", payload: dict | None = None, retry_count: int = 0) -> dict:
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=utf-8"}
+    request_body = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
     request = Request(
         url,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None,
+        data=request_body,
         headers=headers,
         method=method,
     )
+    started = time.perf_counter()
+    status: int | str = "error"
     try:
         with urlopen(request, timeout=30) as response:
-            result = json.loads(response.read().decode("utf-8"))
+            status = response.status
+            response_body = response.read()
+            result = json.loads(response_body.decode("utf-8"))
     except HTTPError as exc:
+        status = exc.code
         detail = exc.read().decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"飞书 API 请求失败: {method} {url} -> HTTP {exc.code}: {detail or exc.reason}") from exc
     except (URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"飞书 API 请求失败: {method} {url}: {exc}") from exc
-    if result.get("code", 0) != 0:
+    succeeded = result.get("code", 0) == 0
+    timing = current_timing()
+    if timing:
+        path = url.split("?", 1)[0]
+        endpoint = "bitable_record" if "/records" in path else "bitable_app" if "/apps/" in path else "tenant_auth" if "/auth/" in path else "feishu_api"
+        operation = "update_record" if method == "PUT" else "list_records" if path.endswith("/records") else "authenticate" if "/auth/" in path else "api_request"
+        timing.api(operation=operation, method=method, endpoint=endpoint, duration_ms=(time.perf_counter() - started) * 1000, status=status, retry_count=retry_count, succeeded=succeeded, request_bytes=len(request_body or b""), response_bytes=len(response_body))
+    if not succeeded:
         raise RuntimeError(
             f"飞书 API 错误 {result.get('code')}: {result.get('msg')} "
             f"({method} {url})"
@@ -141,17 +179,39 @@ class FeishuClient:
         method: str = "GET",
         payload: dict | None = None,
     ) -> dict:
-        """Call Feishu with proactive refresh and one invalid-token retry."""
+        """Call Feishu with token refresh and bounded transient retries."""
         if time.monotonic() >= self._token_refresh_at:
             self._authenticate()
-        try:
-            return _api_json(url, self.token, method=method, payload=payload)
-        except RuntimeError as exc:
-            detail = str(exc)
-            if "99991663" not in detail and "Invalid access token" not in detail:
-                raise
-            self._authenticate()
-            return _api_json(url, self.token, method=method, payload=payload)
+        token_retry = False
+        transient_attempt = 0
+        while True:
+            try:
+                return _api_json(url, self.token, method=method, payload=payload)
+            except RuntimeError as exc:
+                detail = str(exc)
+                invalid_token = "99991663" in detail or "Invalid access token" in detail
+                transient = any(marker in detail for marker in (
+                    "timed out", "timeout", "HTTP 408", "HTTP 429", "HTTP 500",
+                    "HTTP 502", "HTTP 503", "HTTP 504", "暂时不可用",
+                ))
+                if invalid_token and not token_retry:
+                    token_retry = True
+                    timing = current_timing()
+                    if timing:
+                        timing.retry_count += 1
+                    self._authenticate()
+                    continue
+                if not transient or transient_attempt >= 3:
+                    raise
+                transient_attempt += 1
+                logger.warning(
+                    "transient Feishu request failure attempt=%d/3 method=%s url=%s error=%s",
+                    transient_attempt,
+                    method,
+                    url,
+                    detail,
+                )
+                time.sleep(min(2 ** (transient_attempt - 1), 8))
 
     def list_records(
         self,
@@ -213,6 +273,19 @@ class FeishuClient:
         url = f"{BITABLE_API}/apps/{self.app_token}/tables/{self.submission_table_id}/records/{record_id}"
         self._request_json(url, method="PUT", payload={"fields": fields})
 
+    def get_record(self, table_id: str, record_id: str) -> dict[str, Any]:
+        """Fetch a record by native Bitable record_id only."""
+        url = f"{BITABLE_API}/apps/{self.app_token}/tables/{table_id}/records/{record_id}"
+        return self._request_json(url).get("data", {}).get("record", {})
+
+    def find_preset_by_key(self, preset_key: str) -> list[dict[str, Any]]:
+        """Use an exact server-side filter for the formula-backed key."""
+        escaped = preset_key.replace(chr(34), chr(92) + chr(34))
+        return self.list_records(
+            self.preset_table_id,
+            filter_expression=f'CurrentValue.[preset_key]="{escaped}"',
+        )
+
     def create_record(self, table_id: str, fields: dict[str, Any]) -> dict[str, Any]:
         url = f"{BITABLE_API}/apps/{self.app_token}/tables/{table_id}/records"
         return self._request_json(url, method="POST", payload={"fields": fields}).get("data", {}).get("record", {})
@@ -226,9 +299,14 @@ class FeishuClient:
         if not url:
             raise RuntimeError("附件缺少下载地址或 file_token")
         request = Request(url, headers={"Authorization": f"Bearer {self.token}"})
+        started = time.perf_counter()
         try:
             with urlopen(request, timeout=120) as response:
-                return response.read()
+                content = response.read()
+                timing = current_timing()
+                if timing:
+                    timing.api(operation="download_attachment", method="GET", endpoint="media_download", duration_ms=(time.perf_counter() - started) * 1000, status=response.status, retry_count=0, succeeded=True, response_bytes=len(content))
+                return content
         except (HTTPError, URLError, TimeoutError) as exc:
             raise RuntimeError(f"下载附件失败: {exc}") from exc
 
@@ -263,14 +341,19 @@ class FeishuClient:
             },
             method="POST",
         )
+        started = time.perf_counter()
         try:
             with urlopen(request, timeout=120) as response:
-                result = json.loads(response.read().decode("utf-8"))
+                response_body = response.read()
+                result = json.loads(response_body.decode("utf-8"))
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace").strip()
             raise RuntimeError(f"上传 canonical_json 失败: HTTP {exc.code}: {detail or exc.reason}") from exc
         except (URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"上传 canonical_json 失败: {exc}") from exc
+        timing = current_timing()
+        if timing:
+            timing.api(operation="upload_attachment", method="POST", endpoint="media_upload", duration_ms=(time.perf_counter() - started) * 1000, status=response.status, retry_count=0, succeeded=result.get("code", 0) == 0, request_bytes=len(body), response_bytes=len(response_body))
         if result.get("code", 0) != 0:
             raise RuntimeError(f"上传 canonical_json 失败: {result.get('msg')}")
         return result.get("data", {})
@@ -314,80 +397,6 @@ def _submission_method_version(fields: dict[str, Any]) -> str:
     return _lookup_text(value)
 
 
-def validate_json(value: Any) -> dict[str, Any]:
-    errors: list[str] = []
-    if not isinstance(value, dict):
-        errors.append("JSON 顶层必须是 object")
-    elif not all(isinstance(key, str) and key for key in value):
-        errors.append("JSON object 的字段名必须是非空字符串")
-    return {"valid": not errors, "errors": errors, "warnings": []}
-
-
-class UnsupportedSlicerError(ValueError):
-    pass
-
-
-class BambuStudioProcessor:
-    def __init__(self, *, pi_code: str, printer: str, pm_method_version: str):
-        self.pi_code = pi_code
-        self.printer = printer
-        self.pm_method_version = pm_method_version
-
-    def validate(self, uploaded: Any) -> dict[str, Any]:
-        validation = validate_json(uploaded)
-        if validation["valid"] and "version" not in uploaded:
-            validation["valid"] = False
-            validation["errors"].append("BambuStudio JSON 缺少必需字段: version")
-        return validation
-
-    def canonicalize(self, uploaded: Any) -> Any:
-        # P2 has exactly two semantic canonicalization rules.  Deep-copying
-        # protects uploaded_json from in-place mutation.
-        canonical = copy.deepcopy(uploaded)
-        canonical["name"] = f"{self.pi_code} @{self.printer}"
-        canonical["pm_method_version"] = self.pm_method_version
-        return canonical
-
-
-def processor_for(slicer: str, *, pi_code: str, printer: str, pm_method_version: str) -> BambuStudioProcessor:
-    if slicer != "BambuStudio":
-        raise UnsupportedSlicerError(f"暂不支持 slicer: {slicer}")
-    return BambuStudioProcessor(
-        pi_code=pi_code,
-        printer=printer,
-        pm_method_version=pm_method_version,
-    )
-
-
-def _flatten(value: Any, path: str = "") -> dict[str, Any]:
-    if isinstance(value, dict):
-        result: dict[str, Any] = {}
-        for key, child in value.items():
-            result.update(_flatten(child, f"{path}.{key}" if path else key))
-        return result
-    if isinstance(value, list):
-        result = {}
-        for index, child in enumerate(value):
-            result.update(_flatten(child, f"{path}[{index}]"))
-        return result
-    return {path: value}
-
-
-def calculate_diff(old: Any | None, new: Any) -> dict[str, list[dict[str, Any]]]:
-    new_flat = _flatten(new)
-    if old is None:
-        return {"added": [{"path": path, "new": value} for path, value in new_flat.items()], "removed": [], "modified": []}
-    old_flat = _flatten(old)
-    added = [{"path": path, "new": new_flat[path]} for path in new_flat.keys() - old_flat.keys()]
-    removed = [{"path": path, "old": old_flat[path]} for path in old_flat.keys() - new_flat.keys()]
-    modified = [
-        {"path": path, "old": old_flat[path], "new": new_flat[path]}
-        for path in new_flat.keys() & old_flat.keys()
-        if old_flat[path] != new_flat[path]
-    ]
-    return {key: sorted(value, key=lambda item: item["path"]) for key, value in {"added": added, "removed": removed, "modified": modified}.items()}
-
-
 def _json_field(value: object, default: Any) -> Any:
     if isinstance(value, str):
         try:
@@ -404,8 +413,8 @@ class CandidateResult:
     base_version_id: str
     base_version_record_id: str | None
     base_version_no_text: str
-    canonical_json: Any
-    diff: dict[str, Any]
+    canonical_artifact: Artifact
+    diff: UnifiedDiff
     validation: dict[str, Any]
 
 
@@ -423,19 +432,25 @@ class CandidateFailure(ValueError):
 
 
 class SubmissionEnrichment:
-    def __init__(self, client: FeishuClient):
+    def __init__(self, client: FeishuClient, *, processor_registry: SlicerProcessorRegistry | None = None):
         self.client = client
+        self.processor_registry = processor_registry or default_processor_registry()
 
     def _find_preset(self, preset_key: str) -> dict[str, Any] | None:
+        find_filtered = getattr(self.client, "find_preset_by_key", None)
+        if callable(find_filtered):
+            candidates = list(find_filtered(preset_key))
+        else:
+            candidates = self.client.list_records(self.client.preset_table_id)
         matches = [
-            record for record in self.client.list_records(self.client.preset_table_id)
+            record for record in candidates
             if _lookup_text(record.get("fields", {}).get("preset_key")) == preset_key
         ]
         if len(matches) > 1:
             raise CandidateFailure(f"preset_key 存在重复 Preset: {preset_key}")
         return matches[0] if matches else None
 
-    def _base_json(self, preset: dict[str, Any]) -> tuple[str, str | None, str, Any | None]:
+    def _base_artifact(self, preset: dict[str, Any]) -> tuple[str, str | None, str, Artifact]:
         preset_fields = preset.get("fields", {})
         base_version_id = _lookup_text(preset_fields.get("current_version_id"))
         if not base_version_id:
@@ -453,12 +468,15 @@ class SubmissionEnrichment:
         attachments = _attachment_list(version.get("fields", {}).get("canonical_json"))
         if not attachments:
             raise RuntimeError(f"base version 没有 canonical_json: {base_version_id}")
-        try:
-            return base_version_id, version.get("record_id") or version.get("id"), base_version_no_text, json.loads(
-                self.client.download_attachment(attachments[0]).decode("utf-8")
-            )
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"base version canonical_json 无法解析: {base_version_id}") from exc
+        attachment = attachments[0]
+        content = _timed_download(self.client, attachment, "base_attachment_download")
+        filename = str(attachment.get("name") or attachment.get("file_name") or f"{base_version_id}.artifact")
+        media_type = attachment.get("type") or attachment.get("mime_type")
+        return base_version_id, version.get("record_id") or version.get("id"), base_version_no_text, Artifact(
+            content=content,
+            filename=filename,
+            media_type=media_type,
+        )
 
     def _frozen_result(self, record: dict[str, Any]) -> EnrichmentResult:
         fields = record.get("fields", {})
@@ -468,8 +486,8 @@ class SubmissionEnrichment:
             base_version_id=str(fields.get("base_version_id", "")),
             base_version_record_id=None,
             base_version_no_text=str(fields.get(BASE_VERSION_NO_TEXT_FIELD, "")),
-            canonical_json={},
-            diff=_json_field(fields.get("diff"), {}),
+            canonical_artifact=Artifact(b"", "", None),
+            diff=deserialize_unified_diff(fields.get("diff", "{}")),
             validation=_json_field(fields.get("validation"), {}),
             status=str(fields.get("status", "READY_FOR_REVIEW")),
         )
@@ -494,33 +512,46 @@ class SubmissionEnrichment:
         attachments = _preset_data_attachments(fields)
         if not attachments:
             raise ValidationFailure({"valid": False, "errors": ["Submission 缺少 uploaded_json 附件"], "warnings": []})
+        uploaded_attachment = attachments[0]
+        artifact = Artifact(
+            content=_timed_download(self.client, uploaded_attachment, "uploaded_attachment_download"),
+            filename=str(uploaded_attachment.get("name") or uploaded_attachment.get("file_name") or f"{submission_id}.artifact"),
+            media_type=uploaded_attachment.get("type") or uploaded_attachment.get("mime_type"),
+        )
+        processor = self.processor_registry.get(slicer)
+        if processor is None:
+            # Keep the historical exception/API while making the failure
+            # machine-readable through UnsupportedSlicerError.validation.
+            raise UnsupportedSlicerError(slicer)
+        context = ProcessingContext(
+            pi_code=pi_code,
+            printer=printer,
+            slicer=slicer,
+            pm_method_version=pm_method_version,
+        )
+        timing = current_timing()
         try:
-            uploaded = json.loads(self.client.download_attachment(attachments[0]).decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ValidationFailure({
-                "valid": False,
-                "errors": [f"uploaded_json 不是有效 JSON: {exc}"],
-                "warnings": [],
-            }) from exc
-
-        try:
-            processor = processor_for(
-                slicer,
-                pi_code=pi_code,
-                printer=printer,
-                pm_method_version=pm_method_version,
-            )
-        except UnsupportedSlicerError:
+            if timing:
+                with timing.stage("processor", summary_key="processor_ms"):
+                    processed = process_artifact(processor, artifact, context)
+            else:
+                processed = process_artifact(processor, artifact, context)
+        except ValueError as exc:
+            validation = getattr(exc, "validation", None)
+            if validation is not None:
+                raise ValidationFailure(validation.as_dict()) from exc
             raise
-        validation = processor.validate(uploaded)
-        if not validation["valid"]:
+        validation = processed.validation_result.as_dict()
+        if not processed.validation_result.valid:
             raise ValidationFailure(validation)
-
-        canonical = processor.canonicalize(uploaded)
-        preset = self._find_preset(preset_key)
+        if timing:
+            with timing.stage("preset_lookup", summary_key="feishu_read_ms"):
+                preset = self._find_preset(preset_key)
+        else:
+            preset = self._find_preset(preset_key)
         operation = "UPDATE" if preset else "CREATE"
-        base_version_id, base_version_record_id, base_version_no_text, base_json = (
-            self._base_json(preset) if preset else ("", None, "", None)
+        base_version_id, base_version_record_id, base_version_no_text, base_artifact = (
+            self._base_artifact(preset) if preset else ("", None, "", None)
         )
         return CandidateResult(
             operation=operation,
@@ -528,33 +559,61 @@ class SubmissionEnrichment:
             base_version_id=base_version_id,
             base_version_record_id=base_version_record_id,
             base_version_no_text=base_version_no_text,
-            canonical_json=canonical,
-            diff=calculate_diff(base_json, canonical),
+            canonical_artifact=processed.canonical_artifact,
+            diff=(
+                _timed_diff(processor, base_artifact, processed.canonical_artifact, context, operation="diff_update")
+                if operation == "UPDATE"
+                else _timed_diff(processor, None, processed.canonical_artifact, context, operation="diff_create")
+            ),
             validation=validation,
         )
 
-    def _canonical_attachment(self, record: dict[str, Any], submission_id: str, canonical: Any) -> str:
+    def _canonical_attachment(self, record: dict[str, Any], submission_id: str, canonical_artifact: Artifact) -> str:
         fields = record.get("fields", {})
         existing_canonical = _attachment_list(fields.get("canonical_json"))
         if existing_canonical:
-            try:
-                existing = json.loads(self.client.download_attachment(existing_canonical[0]).decode("utf-8"))
-                if existing == canonical:
-                    file_token = existing_canonical[0].get("file_token") or existing_canonical[0].get("token")
-                    if file_token:
-                        return file_token
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                pass
-        canonical_bytes = json.dumps(canonical, ensure_ascii=False, indent=2).encode("utf-8")
-        canonical_name = str(canonical.get("name") or submission_id).strip()
-        uploaded_file = self.client.upload_attachment(f"{canonical_name}.json", canonical_bytes)
+            existing = _timed_download(self.client, existing_canonical[0], "existing_canonical_download")
+            if existing == canonical_artifact.content:
+                file_token = existing_canonical[0].get("file_token") or existing_canonical[0].get("token")
+                if file_token:
+                    return file_token
+        filename = canonical_artifact.filename or f"{submission_id}.artifact"
+        timing = current_timing()
+        if timing:
+            with timing.stage("canonical_attachment_upload", summary_key="attachment_upload_ms"):
+                uploaded_file = self.client.upload_attachment(filename, canonical_artifact.content)
+        else:
+            uploaded_file = self.client.upload_attachment(filename, canonical_artifact.content)
         file_token = uploaded_file.get("file_token") or uploaded_file.get("token")
         if not file_token:
             raise RuntimeError("上传 canonical_json 后没有返回 file_token")
         return file_token
 
-    def enrich_submission(self, submission_id: str) -> EnrichmentResult:
-        record = self.client.get_submission(submission_id)
+    def enrich_submission(
+        self,
+        submission_id: str,
+        *,
+        record: dict[str, Any] | None = None,
+    ) -> EnrichmentResult:
+        with lifecycle_timing(submission_id, "enrich"):
+            return self._enrich_submission_timed(submission_id, record=record)
+
+    def _enrich_submission_timed(
+        self,
+        submission_id: str,
+        *,
+        record: dict[str, Any] | None = None,
+    ) -> EnrichmentResult:
+        timing = current_timing()
+        if record is None:
+            if timing:
+                with timing.stage("get_submission", summary_key="feishu_read_ms"):
+                    record = self.client.get_submission(submission_id)
+            else:
+                record = self.client.get_submission(submission_id)
+        elif timing:
+            with timing.stage("reuse_discovered_submission"):
+                record = record
         fields = record.get("fields", {})
         if fields.get("status") == "READY_FOR_REVIEW":
             return self._frozen_result(record)
@@ -563,7 +622,11 @@ class SubmissionEnrichment:
                 f"Submission is {fields.get('status', 'unknown')} and is not eligible for formal enrichment."
             )
         try:
-            candidate = self.process_candidate(record, submission_id)
+            if timing:
+                with timing.stage("candidate_processing"):
+                    candidate = self.process_candidate(record, submission_id)
+            else:
+                candidate = self.process_candidate(record, submission_id)
         except ValidationFailure as exc:
             self.client.update_submission(record["record_id"], {"validation": json.dumps(exc.validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
             raise
@@ -575,22 +638,28 @@ class SubmissionEnrichment:
             validation = {"valid": False, "errors": [str(exc)], "warnings": []}
             self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
             raise
-        file_token = self._canonical_attachment(record, submission_id, candidate.canonical_json)
+        if timing:
+            with timing.stage("canonical_attachment"):
+                file_token = self._canonical_attachment(record, submission_id, candidate.canonical_artifact)
+        else:
+            file_token = self._canonical_attachment(record, submission_id, candidate.canonical_artifact)
         result = EnrichmentResult(**candidate.__dict__, status="READY_FOR_REVIEW")
-        self.client.update_submission(
-            record["record_id"],
-            {
+        result_fields = {
                 "operation": result.operation,
                 "base_version_id": [candidate.base_version_record_id]
                 if candidate.base_version_record_id
                 else [],
                 BASE_VERSION_NO_TEXT_FIELD: candidate.base_version_no_text,
                 "canonical_json": [{"file_token": file_token}],
-                "diff": json.dumps(result.diff, ensure_ascii=False),
+                "diff": serialize_unified_diff(result.diff),
                 "validation": json.dumps(result.validation, ensure_ascii=False),
                 "status": result.status,
-            },
-        )
+        }
+        if timing:
+            with timing.stage("write_enrichment_result", summary_key="feishu_write_ms"):
+                self.client.update_submission(record["record_id"], result_fields)
+        else:
+            self.client.update_submission(record["record_id"], result_fields)
         return result
 
     def backfill_base_version_no_text(self, *, limit: int | None = None) -> dict[str, int]:
@@ -648,8 +717,20 @@ def main() -> int:
     except (LookupError, RuntimeError, ValueError) as exc:
         print(f"错误: {exc}", file=__import__("sys").stderr)
         return 1
-    print(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
+    print(json.dumps(result.__dict__, ensure_ascii=False, indent=2, default=_json_default))
     return 0
+
+
+def _json_default(value: object) -> object:
+    if isinstance(value, Artifact):
+        return {
+            "filename": value.filename,
+            "media_type": value.media_type,
+            "size": len(value.content),
+        }
+    if isinstance(value, UnifiedDiff):
+        return value.to_dict()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 if __name__ == "__main__":

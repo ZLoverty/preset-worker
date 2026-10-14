@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from typing import Any
 
+from ..diff import serialize_unified_diff
+from ..profiling import current_timing, preview_timing
 from .enrichment import (
     CandidateFailure,
     CandidateResult,
@@ -37,26 +40,25 @@ class PreviewService:
         submission_id: str,
         candidate: CandidateResult,
     ) -> None:
-        file_token = self.candidate_processor._canonical_attachment(
-            record,
-            submission_id,
-            candidate.canonical_json,
-        )
+        timing = current_timing()
+        with timing.stage("canonical_attachment") if timing else nullcontext():
+            file_token = self.candidate_processor._canonical_attachment(
+                record, submission_id, candidate.canonical_artifact
+            )
         record_id = record["record_id"]
         # Persist the complete result before handing ownership back to Miaoda.
-        self.client.update_submission(
-            record_id,
-            {
+        fields = {
                 "operation": candidate.operation,
                 "base_version_id": [candidate.base_version_record_id]
                 if candidate.base_version_record_id
                 else [],
                 "canonical_json": [{"file_token": file_token}],
-                "diff": json.dumps(candidate.diff, ensure_ascii=False),
+                "diff": serialize_unified_diff(candidate.diff),
                 "validation": json.dumps(candidate.validation, ensure_ascii=False),
-            },
-        )
-        self.client.update_submission(record_id, {"status": DRAFT_STATUS})
+        }
+        fields["status"] = DRAFT_STATUS
+        with timing.stage("write_preview_result_and_status", summary_key="feishu_write_ms") if timing else nullcontext():
+            self.client.update_submission(record_id, fields)
 
     def _write_candidate_failure(
         self,
@@ -65,27 +67,46 @@ class PreviewService:
     ) -> None:
         validation = self._candidate_validation(exc)
         record_id = record["record_id"]
-        self.client.update_submission(
-            record_id,
-            {"validation": json.dumps(validation, ensure_ascii=False)},
-        )
-        self.client.update_submission(record_id, {"status": DRAFT_STATUS})
-
-    def preview_submission(self, submission_id: str) -> CandidateResult:
-        """Preview one authoritative PREVIEW_REQUESTED Submission."""
-        record = self.client.get_submission(submission_id)
-        fields = record.get("fields", {})
-        if fields.get("status") != PREVIEW_REQUESTED_STATUS:
-            raise RuntimeError(
-                f"Submission is {fields.get('status', 'unknown')} and is not eligible for preview."
+        timing = current_timing()
+        fields = {
+            "validation": json.dumps(validation, ensure_ascii=False),
+            "status": DRAFT_STATUS,
+        }
+        with timing.stage("write_preview_failure_and_status", summary_key="feishu_write_ms") if timing else nullcontext():
+            self.client.update_submission(
+                record_id,
+                fields,
             )
-        try:
-            candidate = self.candidate_processor.process_candidate(record, submission_id)
-        except (CandidateFailure, ValidationFailure, UnsupportedSlicerError) as exc:
-            self._write_candidate_failure(record, exc)
-            raise
-        self._write_preview_result(record, submission_id, candidate)
-        return candidate
+
+    def preview_submission(
+        self,
+        submission_id: str,
+        *,
+        record: dict[str, Any] | None = None,
+    ) -> CandidateResult:
+        """Preview one authoritative PREVIEW_REQUESTED Submission."""
+        with preview_timing(submission_id):
+            timing = current_timing()
+            if record is None:
+                with timing.stage("get_submission", summary_key="feishu_read_ms") if timing else nullcontext():
+                    record = self.client.get_submission(submission_id)
+            else:
+                # The polling query already returned this complete record.
+                with timing.stage("reuse_discovered_submission") if timing else nullcontext():
+                    record = record
+            fields = record.get("fields", {})
+            if fields.get("status") != PREVIEW_REQUESTED_STATUS:
+                raise RuntimeError(
+                    f"Submission is {fields.get('status', 'unknown')} and is not eligible for preview."
+                )
+            try:
+                with timing.stage("candidate_processing") if timing else nullcontext():
+                    candidate = self.candidate_processor.process_candidate(record, submission_id)
+            except (CandidateFailure, ValidationFailure, UnsupportedSlicerError) as exc:
+                self._write_candidate_failure(record, exc)
+                raise
+            self._write_preview_result(record, submission_id, candidate)
+            return candidate
 
 
 __all__ = ["PreviewService", "PREVIEW_REQUESTED_STATUS"]
