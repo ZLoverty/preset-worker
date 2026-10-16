@@ -86,6 +86,12 @@ class SnapmakerOrcaProcessorTests(unittest.TestCase):
         self.assertNotEqual(upstream.slicer_id, snapmaker.slicer_id)
         self.assertIsNot(upstream, snapmaker)
 
+    def test_registry_accepts_snapmaker_feishu_aliases(self):
+        registry = default_processor_registry()
+        expected = registry.require("SnapmakerOrcaSlicer")
+        for alias in ("OrcaSlicer (Snapmaker)", "OrcaSlicer Snapmaker", "Orca Slicer (Snapmaker)"):
+            self.assertIs(registry.require(alias), expected)
+
     def test_real_snapmaker_golden_preserves_native_fields(self):
         result = self.processor.process(self.source, self.context)
         self.assertTrue(result.validation_result.valid)
@@ -165,6 +171,14 @@ class SnapmakerOrcaProcessorTests(unittest.TestCase):
 
 
 class SnapmakerOrcaWorkflowTests(unittest.TestCase):
+    def test_create_accepts_feishu_snapmaker_slicer_alias(self):
+        client = WorkflowClient()
+        client.submission["fields"]["slicer"] = "OrcaSlicer (Snapmaker)"
+        client.submission["fields"]["preset_key"] = "L2002CF | Snapmaker U1 | OrcaSlicer (Snapmaker)"
+        result = SubmissionEnrichment(client).process_candidate(client.submission, "S1")
+        self.assertEqual(result.canonical_artifact.filename, "L2002CF @Snapmaker U1.json")
+        self.assertTrue(result.validation["valid"])
+
     def test_create_selects_distinct_snapmaker_processor(self):
         client = WorkflowClient()
         result = SubmissionEnrichment(client).process_candidate(client.submission, "S1")

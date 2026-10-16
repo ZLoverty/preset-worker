@@ -94,6 +94,12 @@ def process_artifact(
 
 
 class SlicerProcessorRegistry:
+    _ALIASES = {
+        "OrcaSlicer (Snapmaker)": "SnapmakerOrcaSlicer",
+        "OrcaSlicer Snapmaker": "SnapmakerOrcaSlicer",
+        "Orca Slicer (Snapmaker)": "SnapmakerOrcaSlicer",
+    }
+
     def __init__(self, processors: list[SlicerProcessor] | None = None):
         self._processors = {processor.slicer_id: processor for processor in processors or []}
 
@@ -101,7 +107,8 @@ class SlicerProcessorRegistry:
         self._processors[processor.slicer_id] = processor
 
     def get(self, slicer_id: str) -> SlicerProcessor | None:
-        return self._processors.get(slicer_id)
+        normalized_id = self._ALIASES.get(slicer_id.strip(), slicer_id.strip())
+        return self._processors.get(normalized_id)
 
     def require(self, slicer_id: str) -> SlicerProcessor:
         processor = self.get(slicer_id)

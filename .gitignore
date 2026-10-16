@@ -250,3 +250,5 @@ startup_error.log
 device/frontend/node_modules/
 device/frontend/.vite/
 device/backend/static/
+
+reports/
