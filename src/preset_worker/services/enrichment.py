@@ -631,16 +631,25 @@ class SubmissionEnrichment:
             else:
                 candidate = self.process_candidate(record, submission_id)
         except ValidationFailure as exc:
-            self.client.update_submission(record["record_id"], {"validation": json.dumps(exc.validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
+            self.client.update_submission(record["record_id"], {"validation": json.dumps(exc.validation, ensure_ascii=False), "status": "VALIDATION_FAILED", "consistency_report": ""})
             raise
         except CandidateFailure as exc:
             validation = {"valid": False, "errors": [str(exc)], "warnings": []}
-            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
+            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED", "consistency_report": ""})
             raise ValidationFailure(validation) from exc
         except UnsupportedSlicerError as exc:
             validation = {"valid": False, "errors": [str(exc)], "warnings": []}
-            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
+            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED", "consistency_report": ""})
             raise
+        # This import stays local because consistency_preview reuses the
+        # enrichment attachment helpers.
+        from .consistency_preview import (
+            CONSISTENCY_REPORT_FIELD,
+            build_consistency_report,
+            update_submission_with_consistency_report,
+        )
+
+        consistency_report = build_consistency_report(self.client, record, candidate)
         if timing:
             with timing.stage("canonical_attachment"):
                 file_token = self._canonical_attachment(record, submission_id, candidate.canonical_artifact)
@@ -657,12 +666,13 @@ class SubmissionEnrichment:
                 "diff": serialize_unified_diff(result.diff),
                 "validation": json.dumps(result.validation, ensure_ascii=False),
                 "status": result.status,
+                CONSISTENCY_REPORT_FIELD: consistency_report,
         }
         if timing:
             with timing.stage("write_enrichment_result", summary_key="feishu_write_ms"):
-                self.client.update_submission(record["record_id"], result_fields)
+                update_submission_with_consistency_report(self.client, record["record_id"], result_fields)
         else:
-            self.client.update_submission(record["record_id"], result_fields)
+            update_submission_with_consistency_report(self.client, record["record_id"], result_fields)
         return result
 
     def backfill_base_version_no_text(self, *, limit: int | None = None) -> dict[str, int]:
