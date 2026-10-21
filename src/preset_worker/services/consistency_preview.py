@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..slicers.contracts import Artifact
+from ..slicers.registry import canonical_slicer_id
 from ..three_mf.consistency import (
     validate_bambu_consistency,
     validate_creality_consistency,
@@ -78,7 +79,7 @@ def _serialize(payload: dict[str, Any], *, allow_fallback: bool = True) -> str:
 def build_consistency_report(client: Any, record: dict[str, Any], candidate: Any) -> str:
     """Return the complete report envelope as text, or empty text when unavailable."""
     fields = record.get("fields", {})
-    slicer = _lookup_text(fields.get("slicer"))
+    slicer = canonical_slicer_id(_lookup_text(fields.get("slicer")))
     validator = validate_bambu_consistency if slicer == "BambuStudio" else CONSISTENCY_VALIDATORS.get(slicer)
     if validator is None:
         return ""

@@ -20,6 +20,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from ..slicers import Artifact, ProcessingContext, SlicerProcessorRegistry, process_artifact
+from ..slicers.registry import canonical_slicer_id
 from ..slicers.registry import default_processor_registry
 from ..diff import UnifiedDiff, deserialize_unified_diff, serialize_unified_diff
 from ..slicers.contracts import UnsupportedSlicerError
@@ -500,7 +501,7 @@ class SubmissionEnrichment:
         try:
             pi_code = _lookup_text(fields.get("pi_code"))
             printer = _lookup_text(fields.get("printer") or fields.get("machine"))
-            slicer = _lookup_text(fields.get("slicer"))
+            slicer = canonical_slicer_id(_lookup_text(fields.get("slicer")))
             # preset_key is a Bitable formula field and is authoritative.
             preset_key = _lookup_text(fields.get("preset_key"))
             pm_method_version = _submission_method_version(fields)
