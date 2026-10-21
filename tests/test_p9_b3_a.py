@@ -24,7 +24,7 @@ class Candidate:
 
 class P9B3ATests(unittest.TestCase):
     def test_unsupported_slicer_is_empty(self):
-        client = Client("OrcaSlicer")
+        client = Client("UnknownSlicer")
         self.assertEqual(build_consistency_report(client, client.record, Candidate()), "")
 
     def test_missing_project_is_empty(self):

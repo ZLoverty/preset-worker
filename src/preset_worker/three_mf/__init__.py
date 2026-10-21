@@ -7,6 +7,7 @@ from .consistency import (
     validate_elegoo_consistency,
     validate_orca_consistency,
     validate_snapmaker_orca_consistency,
+    validate_prusa_slicer_consistency,
 )
 from .models import (
     BambuProjectSnapshot,
@@ -25,4 +26,5 @@ __all__ = [
     "validate_elegoo_consistency",
     "validate_orca_consistency",
     "validate_snapmaker_orca_consistency",
+    "validate_prusa_slicer_consistency",
 ]

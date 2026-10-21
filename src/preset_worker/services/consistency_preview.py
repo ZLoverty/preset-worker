@@ -8,7 +8,14 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..slicers.contracts import Artifact
-from ..three_mf.consistency import validate_bambu_consistency
+from ..three_mf.consistency import (
+    validate_bambu_consistency,
+    validate_creality_consistency,
+    validate_elegoo_consistency,
+    validate_orca_consistency,
+    validate_prusa_slicer_consistency,
+    validate_snapmaker_orca_consistency,
+)
 from .enrichment import _attachment_list, _lookup_text, _timed_download
 
 logger = logging.getLogger(__name__)
@@ -18,6 +25,15 @@ PROJECT_FIELD = "preset 3mf"
 # Conservative limit for a Bitable multiline text value. Reports are never
 # truncated; an oversized report is replaced by a small error envelope.
 CONSISTENCY_REPORT_MAX_BYTES = 100_000
+
+CONSISTENCY_VALIDATORS = {
+    "BambuStudio": validate_bambu_consistency,
+    "CrealityPrint": validate_creality_consistency,
+    "ElegooSlicer": validate_elegoo_consistency,
+    "OrcaSlicer": validate_orca_consistency,
+    "SnapmakerOrcaSlicer": validate_snapmaker_orca_consistency,
+    "PrusaSlicer": validate_prusa_slicer_consistency,
+}
 
 
 def _now() -> str:
@@ -62,7 +78,9 @@ def _serialize(payload: dict[str, Any], *, allow_fallback: bool = True) -> str:
 def build_consistency_report(client: Any, record: dict[str, Any], candidate: Any) -> str:
     """Return the complete report envelope as text, or empty text when unavailable."""
     fields = record.get("fields", {})
-    if _lookup_text(fields.get("slicer")) != "BambuStudio":
+    slicer = _lookup_text(fields.get("slicer"))
+    validator = validate_bambu_consistency if slicer == "BambuStudio" else CONSISTENCY_VALIDATORS.get(slicer)
+    if validator is None:
         return ""
     attachments = _attachment_list(fields.get(PROJECT_FIELD))
     if not attachments:
@@ -74,7 +92,11 @@ def build_consistency_report(client: Any, record: dict[str, Any], candidate: Any
             filename=str(attachment.get("name") or attachment.get("file_name") or "project.3mf"),
             media_type=attachment.get("type") or attachment.get("mime_type"),
         )
-        report = validate_bambu_consistency(candidate.source_artifact, project)
+        report = validator(candidate.source_artifact, project)
+        # A report with unresolved rows is still useful READY information, but
+        # malformed project/Preset processing must use the outer ERROR state.
+        if report.get("errors") or report.get("project_issues"):
+            return _error_text("CONSISTENCY_VALIDATION_FAILED")
         return _serialize(_envelope("READY", report=report))
     except Exception as exc:  # optional boundary: never fail native Preview
         logger.warning("consistency validation failed: %s", type(exc).__name__)

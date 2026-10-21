@@ -15,6 +15,7 @@ from .bambu_parser import parse_bambu_3mf, resolve_bambu_project
 from .comparison_core import compare_parameter, select_slot
 from .models import ResolutionContext, ResolutionStatus
 from .native_consistency import validate_native_consistency
+from .prusa_consistency import validate_prusa_consistency
 
 REQUIRED_PARAMETERS = (
     "filament_flow_ratio",
@@ -403,3 +404,13 @@ def validate_snapmaker_orca_consistency(
     return validate_native_consistency(
         SnapmakerOrcaSlicerProcessor(), preset_artifact, project_artifact, context=context,
     )
+
+
+def validate_prusa_slicer_consistency(
+    preset_artifact: Artifact,
+    project_artifact: Artifact,
+    *,
+    context: ProcessingContext | None = None,
+) -> dict[str, Any]:
+    """Run isolated PrusaSlicer INI/3MF consistency validation."""
+    return validate_prusa_consistency(preset_artifact, project_artifact, context=context)

@@ -15,7 +15,7 @@ from .enrichment import (
     UnsupportedSlicerError,
     ValidationFailure,
 )
-from .consistency_preview import CONSISTENCY_REPORT_FIELD, build_consistency_report
+from .consistency_preview import CONSISTENCY_REPORT_FIELD, _error_text, build_consistency_report
 
 
 PREVIEW_REQUESTED_STATUS = "PREVIEW_REQUESTED"
@@ -64,16 +64,21 @@ class PreviewService:
             try:
                 self.client.update_submission(record_id, fields)
             except Exception as exc:
-                # Only retry without the optional field for an error that
-                # identifies field/value/size validation; native failures
-                # retain their original behavior.
                 detail = str(exc).lower()
-                markers = (CONSISTENCY_REPORT_FIELD, "field", "text", "size", "limit", "invalid")
-                if consistency_report and any(marker in detail for marker in markers):
-                    fields.pop(CONSISTENCY_REPORT_FIELD, None)
-                    self.client.update_submission(record_id, fields)
-                else:
+                field_markers = ("field", "text", "size", "limit", "invalid")
+                if CONSISTENCY_REPORT_FIELD not in detail or not any(marker in detail for marker in field_markers):
                     raise
+                # A report-field rejection must not fall back by omitting the
+                # field: omission would preserve a previous report. Try a
+                # bounded sanitized ERROR value, then an explicit clear.
+                fallback_fields = dict(fields)
+                fallback_fields[CONSISTENCY_REPORT_FIELD] = _error_text("CONSISTENCY_REPORT_WRITE_FAILED")
+                try:
+                    self.client.update_submission(record_id, fallback_fields)
+                except Exception:
+                    clear_fields = dict(fields)
+                    clear_fields[CONSISTENCY_REPORT_FIELD] = ""
+                    self.client.update_submission(record_id, clear_fields)
 
     def _write_candidate_failure(
         self,
@@ -86,6 +91,7 @@ class PreviewService:
         fields = {
             "validation": json.dumps(validation, ensure_ascii=False),
             "status": DRAFT_STATUS,
+            CONSISTENCY_REPORT_FIELD: "",
         }
         with timing.stage("write_preview_failure_and_status", summary_key="feishu_write_ms") if timing else nullcontext():
             self.client.update_submission(
