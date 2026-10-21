@@ -15,6 +15,11 @@ from .enrichment import (
     UnsupportedSlicerError,
     ValidationFailure,
 )
+from .consistency_preview import (
+    CONSISTENCY_REPORT_FIELD,
+    build_consistency_report,
+    update_submission_with_consistency_report,
+)
 
 
 PREVIEW_REQUESTED_STATUS = "PREVIEW_REQUESTED"
@@ -39,6 +44,7 @@ class PreviewService:
         record: dict[str, Any],
         submission_id: str,
         candidate: CandidateResult,
+        consistency_report: str = "",
     ) -> None:
         timing = current_timing()
         with timing.stage("canonical_attachment") if timing else nullcontext():
@@ -57,8 +63,9 @@ class PreviewService:
                 "validation": json.dumps(candidate.validation, ensure_ascii=False),
         }
         fields["status"] = DRAFT_STATUS
+        fields[CONSISTENCY_REPORT_FIELD] = consistency_report
         with timing.stage("write_preview_result_and_status", summary_key="feishu_write_ms") if timing else nullcontext():
-            self.client.update_submission(record_id, fields)
+            update_submission_with_consistency_report(self.client, record_id, fields)
 
     def _write_candidate_failure(
         self,
@@ -71,6 +78,7 @@ class PreviewService:
         fields = {
             "validation": json.dumps(validation, ensure_ascii=False),
             "status": DRAFT_STATUS,
+            CONSISTENCY_REPORT_FIELD: "",
         }
         with timing.stage("write_preview_failure_and_status", summary_key="feishu_write_ms") if timing else nullcontext():
             self.client.update_submission(
@@ -105,7 +113,10 @@ class PreviewService:
             except (CandidateFailure, ValidationFailure, UnsupportedSlicerError) as exc:
                 self._write_candidate_failure(record, exc)
                 raise
-            self._write_preview_result(record, submission_id, candidate)
+            # Consistency is informational and its preparation is isolated;
+            # the result remains one Preview write when possible.
+            consistency_report = build_consistency_report(self.client, record, candidate)
+            self._write_preview_result(record, submission_id, candidate, consistency_report)
             return candidate
 
 

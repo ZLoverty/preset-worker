@@ -1,5 +1,62 @@
 # Release Notes
 
+## v0.3.0
+
+3MF-aware consistency validation and cross-slicer workflow integration.
+
+### 3MF inspection and consistency validation
+
+- Added safe 3MF inspection and parsing utilities for project configuration,
+  slot identity, stored parameter values, and artifact diagnostics.
+- Added element-wise Preset-to-3MF comparison for the canonical process
+  parameters, including array index, source paths, normalized values, and
+  explicit `MATCH`, `MISMATCH`, missing, unresolved, and ambiguous states.
+- Added slot-aware resolution for multi-filament projects, including the
+  Snapmaker Orca four-slot fixture and PrusaSlicer native project format.
+- Added isolated consistency adapters for BambuStudio, CrealityPrint,
+  ElegooSlicer, OrcaSlicer, Snapmaker OrcaSlicer, and PrusaSlicer.
+- Added real paired 3MF/Preset fixtures, cross-slicer contract tests, and
+  validator regression coverage.
+
+### Preview and formal Submit integration
+
+- Added the `p9b2.consistency.v1` report envelope and persisted reports in the
+  existing `consistency_report` Submission field.
+- Preview now recomputes consistency from the current Preset and first `preset
+  3mf` attachment, writing `READY`, sanitized `ERROR`, or an explicit empty
+  value as appropriate.
+- Formal Submit now independently regenerates the report from the current
+  `CandidateResult.source_artifact`; it does not reuse a previous Preview
+  report.
+- Added report writeback fallback handling that retries with a sanitized error
+  and then explicitly clears the field, preventing stale READY reports.
+- Added exact compatibility normalization for the Feishu display label
+  `OrcaSlicer (Snapmaker)` to the internal `SnapmakerOrcaSlicer` identity.
+- Preserved native enrichment, Preview, approval, and publication state
+  transitions while isolating consistency failures from native processing.
+
+### Photo evidence preservation
+
+- Changed approved Update projection to field-level photo patch semantics:
+  newly submitted photos replace only their corresponding fields, while
+  missing or empty fields preserve existing Preset photos.
+- Added explicit rejection of multiple attachments in a single-photo field.
+- Preserved existing Feishu attachment metadata and idempotent approval
+  behavior without introducing new storage or schema fields.
+- Documented that PresetVersion currently has no complete effective-photo
+  snapshot fields; master Preset projection is corrected, but historical photo
+  snapshots require a future schema change.
+
+### Reliability and verification
+
+- Added focused tests for 3MF parsing, six-slicer dispatch, Preview and Submit
+  integration, validator isolation, report fallback, photo patch merging, and
+  approval recovery.
+- Current regression result: 217 tests passed, 1 skipped, with one known
+  pre-existing diff-category expectation failure in
+  `tests/test_diff_contract.py`.
+
+
 ## v0.2.0
 
 Extended slicer support and unified contract.

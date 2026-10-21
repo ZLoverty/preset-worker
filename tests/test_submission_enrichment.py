@@ -95,6 +95,9 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         self.assertEqual(client.versions, [])
         self.assertEqual(client.submission["fields"]["canonical_json"], [{"file_token": "canonical-1"}])
         self.assertEqual(len(client.updates), 1)
+        self.assertEqual(client.updates[0]["consistency_report"], "")
+        self.assertNotIn("consistency_status", client.updates[0])
+        self.assertNotIn("consistency_generated_at", client.updates[0])
 
     def test_preview_upload_failure_does_not_write_success_status(self):
         client = FakeClient({"name": "new", "version": "1"})

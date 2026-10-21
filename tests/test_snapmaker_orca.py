@@ -190,6 +190,14 @@ class SnapmakerOrcaWorkflowTests(unittest.TestCase):
         self.assertTrue(result.diff.changes)
         self.assertTrue(all(change.change_type is ChangeType.ADDED for change in result.diff.changes))
 
+    def test_display_label_alias_selects_snapmaker_processor(self):
+        client = WorkflowClient()
+        client.submission["fields"]["slicer"] = "OrcaSlicer (Snapmaker)"
+        result = SubmissionEnrichment(client).process_candidate(client.submission, "S1")
+        self.assertEqual(result.operation, "CREATE")
+        canonical = json.loads(result.canonical_artifact.content)
+        self.assertEqual(canonical["name"], "L2002CF @Snapmaker U1")
+
     def test_update_uses_snapmaker_diff_and_namespace(self):
         client = WorkflowClient(with_base=True)
         result = SubmissionEnrichment(client).process_candidate(client.submission, "S1")

@@ -20,6 +20,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from ..slicers import Artifact, ProcessingContext, SlicerProcessorRegistry, process_artifact
+from ..slicers.registry import canonical_slicer_id
 from ..slicers.registry import default_processor_registry
 from ..diff import UnifiedDiff, deserialize_unified_diff, serialize_unified_diff
 from ..slicers.contracts import UnsupportedSlicerError
@@ -413,6 +414,7 @@ class CandidateResult:
     base_version_id: str
     base_version_record_id: str | None
     base_version_no_text: str
+    source_artifact: Artifact
     canonical_artifact: Artifact
     diff: UnifiedDiff
     validation: dict[str, Any]
@@ -486,6 +488,7 @@ class SubmissionEnrichment:
             base_version_id=str(fields.get("base_version_id", "")),
             base_version_record_id=None,
             base_version_no_text=str(fields.get(BASE_VERSION_NO_TEXT_FIELD, "")),
+            source_artifact=Artifact(b"", "", None),
             canonical_artifact=Artifact(b"", "", None),
             diff=deserialize_unified_diff(fields.get("diff", "{}")),
             validation=_json_field(fields.get("validation"), {}),
@@ -498,7 +501,7 @@ class SubmissionEnrichment:
         try:
             pi_code = _lookup_text(fields.get("pi_code"))
             printer = _lookup_text(fields.get("printer") or fields.get("machine"))
-            slicer = _lookup_text(fields.get("slicer"))
+            slicer = canonical_slicer_id(_lookup_text(fields.get("slicer")))
             # preset_key is a Bitable formula field and is authoritative.
             preset_key = _lookup_text(fields.get("preset_key"))
             pm_method_version = _submission_method_version(fields)
@@ -559,6 +562,7 @@ class SubmissionEnrichment:
             base_version_id=base_version_id,
             base_version_record_id=base_version_record_id,
             base_version_no_text=base_version_no_text,
+            source_artifact=artifact,
             canonical_artifact=processed.canonical_artifact,
             diff=(
                 _timed_diff(processor, base_artifact, processed.canonical_artifact, context, operation="diff_update")
@@ -628,16 +632,25 @@ class SubmissionEnrichment:
             else:
                 candidate = self.process_candidate(record, submission_id)
         except ValidationFailure as exc:
-            self.client.update_submission(record["record_id"], {"validation": json.dumps(exc.validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
+            self.client.update_submission(record["record_id"], {"validation": json.dumps(exc.validation, ensure_ascii=False), "status": "VALIDATION_FAILED", "consistency_report": ""})
             raise
         except CandidateFailure as exc:
             validation = {"valid": False, "errors": [str(exc)], "warnings": []}
-            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
+            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED", "consistency_report": ""})
             raise ValidationFailure(validation) from exc
         except UnsupportedSlicerError as exc:
             validation = {"valid": False, "errors": [str(exc)], "warnings": []}
-            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED"})
+            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED", "consistency_report": ""})
             raise
+        # This import stays local because consistency_preview reuses the
+        # enrichment attachment helpers.
+        from .consistency_preview import (
+            CONSISTENCY_REPORT_FIELD,
+            build_consistency_report,
+            update_submission_with_consistency_report,
+        )
+
+        consistency_report = build_consistency_report(self.client, record, candidate)
         if timing:
             with timing.stage("canonical_attachment"):
                 file_token = self._canonical_attachment(record, submission_id, candidate.canonical_artifact)
@@ -654,12 +667,13 @@ class SubmissionEnrichment:
                 "diff": serialize_unified_diff(result.diff),
                 "validation": json.dumps(result.validation, ensure_ascii=False),
                 "status": result.status,
+                CONSISTENCY_REPORT_FIELD: consistency_report,
         }
         if timing:
             with timing.stage("write_enrichment_result", summary_key="feishu_write_ms"):
-                self.client.update_submission(record["record_id"], result_fields)
+                update_submission_with_consistency_report(self.client, record["record_id"], result_fields)
         else:
-            self.client.update_submission(record["record_id"], result_fields)
+            update_submission_with_consistency_report(self.client, record["record_id"], result_fields)
         return result
 
     def backfill_base_version_no_text(self, *, limit: int | None = None) -> dict[str, int]:
