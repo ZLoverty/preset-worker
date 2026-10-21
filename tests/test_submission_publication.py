@@ -255,7 +255,7 @@ class SubmissionPublicationTests(unittest.TestCase):
         client.versions = [{"record_id": "version-1", "fields": {"version_id": "X@v1", "version_no": 1}}]
         SubmissionPublisher(client).publish_submission("S1")
         self.assertEqual(client.presets[0]["fields"]["冷却参数照片"], [{"file_token": "photo-1"}])
-        self.assertEqual(client.presets[0]["fields"]["最大体积流量照片"], [])
+        self.assertEqual(client.presets[0]["fields"]["最大体积流量照片"], [{"file_token": "old"}])
 
 
 if __name__ == "__main__":

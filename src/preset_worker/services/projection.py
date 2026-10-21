@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -37,6 +38,33 @@ PHOTO_PROJECTIONS = (
 PRESET_3MF_PROJECTION = AttachmentProjection("preset 3mf", "preset 3mf")
 CURRENT_ATTACHMENT_PROJECTIONS = PHOTO_PROJECTIONS + (PRESET_3MF_PROJECTION,)
 
+
+def _effective_attachments(value: object, adapter: FeishuAttachmentAdapter) -> list[dict[str, Any]]:
+    """Normalize one configured single-photo field and reject ambiguity."""
+    attachments = adapter.for_field(value)
+    if len(attachments) > 1:
+        raise ValueError("每个照片字段最多只能提交一个附件")
+    return attachments
+
+
+def merge_photos(
+    existing: dict[str, Any],
+    submitted: dict[str, Any],
+    photo_fields: tuple[str, ...] = tuple(spec.target_field for spec in PHOTO_PROJECTIONS),
+    *,
+    attachment_adapter: FeishuAttachmentAdapter | None = None,
+) -> dict[str, Any]:
+    """Apply field-level photo patches without interpreting empty as delete."""
+    adapter = attachment_adapter or FeishuAttachmentAdapter()
+    merged = copy.deepcopy(existing)
+    for field in photo_fields:
+        if field not in submitted:
+            continue
+        new_photo = _effective_attachments(submitted.get(field), adapter)
+        if new_photo:
+            merged[field] = new_photo
+    return merged
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,20 +88,41 @@ class ProjectionService:
         submission: dict[str, Any],
         preset: dict[str, Any],
     ) -> None:
-        """Replace every configured target with the source's current value.
-
-        Missing or empty source fields become ``[]`` so old photos are
-        cleared rather than retained.  All mappings are sent together, which
-        makes a retry naturally idempotent and avoids attachment accumulation.
-        """
+        """Project current fields, patching photo fields at field granularity."""
 
         source_fields = submission.get("fields", {})
+        preset_fields = preset.get("fields", {})
+        photo_fields = tuple(
+            projection.target_field
+            for projection in self.projections
+            if projection.source_field in {spec.source_field for spec in PHOTO_PROJECTIONS}
+        )
+        merged_photos = merge_photos(
+            {
+                field: preset_fields.get(field)
+                for field in photo_fields
+                if field in preset_fields
+            },
+            {
+                projection.target_field: source_fields.get(projection.source_field)
+                for projection in self.projections
+                if projection.target_field in photo_fields
+            },
+            photo_fields,
+            attachment_adapter=self.attachment_adapter,
+        )
         updates = {
+            field: merged_photos[field]
+            for field in photo_fields
+            if field in merged_photos
+        }
+        updates.update({
             projection.target_field: self.attachment_adapter.for_field(
                 source_fields.get(projection.source_field)
             )
             for projection in self.projections
-        }
+            if projection.target_field not in photo_fields
+        })
         if updates:
             counts = {
                 field: len(value)
