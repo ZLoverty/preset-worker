@@ -6,6 +6,19 @@ Install the package in development mode:
 pip install -e .
 ```
 
+Preview and apply the PI Code x Printer CoverageTarget synchronization:
+
+```powershell
+coverage-sync --dry-run
+coverage-sync --apply
+```
+
+The synchronization reads `FEISHU_PI_CODE_TABLE_ID`,
+`FEISHU_PRINTER_TABLE_ID`, and `FEISHU_COVERAGE_TARGET_TABLE_ID`. It stops
+without writes when source data or the CoverageTarget schema fails validation.
+Writes are limited to the `pi_code`, `printer`, and `active` fields; formula,
+lookup, key, importance, owner, target-date, and notes fields are left alone.
+
 Run a single Submission operation:
 
 ```powershell

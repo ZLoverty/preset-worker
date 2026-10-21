@@ -257,6 +257,11 @@ class FeishuClient:
             filter_expression=expression,
         )
 
+    def list_fields(self, table_id: str) -> list[dict[str, Any]]:
+        """List a table's field definitions."""
+        url = f"{BITABLE_API}/apps/{self.app_token}/tables/{table_id}/fields?page_size=100"
+        return self._request_json(url).get("data", {}).get("items", [])
+
     def list_preview_candidates(self, *, limit: int) -> list[dict[str, Any]]:
         """Find explicit preview requests without loading inactive records."""
         return self.find_submission_candidates("PREVIEW_REQUESTED", limit=limit)
@@ -291,9 +296,33 @@ class FeishuClient:
         url = f"{BITABLE_API}/apps/{self.app_token}/tables/{table_id}/records"
         return self._request_json(url, method="POST", payload={"fields": fields}).get("data", {}).get("record", {})
 
+    def batch_create_records(self, table_id: str, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Create records in bounded batches using the existing retry policy."""
+        created: list[dict[str, Any]] = []
+        for start in range(0, len(records), 500):
+            chunk = records[start:start + 500]
+            url = f"{BITABLE_API}/apps/{self.app_token}/tables/{table_id}/records/batch_create"
+            data = self._request_json(
+                url,
+                method="POST",
+                payload={"records": [{"fields": fields} for fields in chunk]},
+            ).get("data", {})
+            created.extend(data.get("records", []))
+        return created
+
     def update_record(self, table_id: str, record_id: str, fields: dict[str, Any]) -> None:
         url = f"{BITABLE_API}/apps/{self.app_token}/tables/{table_id}/records/{record_id}"
         self._request_json(url, method="PUT", payload={"fields": fields})
+
+    def batch_update_records(self, table_id: str, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Update records in bounded batches using the existing retry policy."""
+        updated: list[dict[str, Any]] = []
+        for start in range(0, len(records), 500):
+            chunk = records[start:start + 500]
+            url = f"{BITABLE_API}/apps/{self.app_token}/tables/{table_id}/records/batch_update"
+            data = self._request_json(url, method="POST", payload={"records": chunk}).get("data", {})
+            updated.extend(data.get("records", []))
+        return updated
 
     def download_attachment(self, attachment: dict[str, Any]) -> bytes:
         url = _attachment_url(attachment)
