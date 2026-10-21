@@ -1,0 +1,13 @@
+{
+  "schema_version": "p9d0.fixture.v1",
+  "slicer": "PrusaSlicer",
+  "slicer_version": "2.9.6",
+  "printer_model": "COREONE_INDX4T",
+  "export_mode": null,
+  "project_file": "prusa.3mf",
+  "preset_file": "pla_test.ini",
+  "filament_count": 4,
+  "expected_filament_name": "pla_test",
+  "expected_slot": null,
+  "notes": "Project stores semicolon-prefixed configuration in Metadata/Slic3r_PE.config; preset identity is unresolved because filament_settings_id is empty."
+}

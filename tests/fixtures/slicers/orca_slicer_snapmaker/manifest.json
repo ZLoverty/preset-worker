@@ -1,0 +1,13 @@
+{
+  "schema_version": "p9d0.fixture.v1",
+  "slicer": "SnapmakerOrcaSlicer",
+  "slicer_version": "2.4.0",
+  "printer_model": "Snapmaker U1",
+  "export_mode": null,
+  "project_file": "snapmaker-orca.3mf",
+  "preset_file": "pla_test.json",
+  "filament_count": 4,
+  "expected_filament_name": "pla_test",
+  "expected_slot": 1,
+  "notes": "Project version 2.4.0 is recorded in Metadata/project_settings.config; pla_test.info remains sidecar metadata with base_id=OGFSA04."
+}

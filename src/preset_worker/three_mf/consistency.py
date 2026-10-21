@@ -6,9 +6,15 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from ..slicers.bambu_studio import BambuStudioProcessor
+from ..slicers.creality_print import CrealityPrintProcessor
+from ..slicers.elegoo_slicer import ElegooSlicerProcessor
+from ..slicers.orca_slicer import OrcaSlicerProcessor
+from ..slicers.snapmaker_orca import SnapmakerOrcaSlicerProcessor
 from ..slicers.contracts import Artifact, ProcessingContext, ValidationStatus
 from .bambu_parser import parse_bambu_3mf, resolve_bambu_project
+from .comparison_core import compare_parameter, select_slot
 from .models import ResolutionContext, ResolutionStatus
+from .native_consistency import validate_native_consistency
 
 REQUIRED_PARAMETERS = (
     "filament_flow_ratio",
@@ -226,20 +232,19 @@ def _compare_stored_parameter(name: str, preset: dict[str, Any], project: dict[s
     return result
 
 
-def _slot_match(snapshot: Any, preset: dict[str, Any]) -> tuple[str, int | None, list[str]]:
+def _slot_match(snapshot: Any, preset: dict[str, Any]) -> tuple[str, int | None, list[str], list[int]]:
     ids = preset.get("filament_settings_id")
     candidates = ids if isinstance(ids, list) else ([] if ids is None else [ids])
-    candidates = [str(value) for value in candidates if value not in (None, "", "nil")]
-    if not candidates:
-        return "UNRESOLVED", None, ["preset filament_settings_id is absent"]
-    matches = [slot.slot_id for slot in snapshot.filament_slots if str(slot.settings_id) in candidates]
-    if len(matches) == 1:
-        return "UNIQUE", matches[0], [f"exact filament_settings_id match: {candidates[0]}"]
-    if len(matches) > 1:
-        return "AMBIGUOUS", None, ["multiple project slots match preset identity"]
-    if len(snapshot.filament_slots) > 1:
-        return "AMBIGUOUS", None, ["no identity match among multiple project slots"]
-    return "UNRESOLVED", None, ["preset identity does not match the only project slot"]
+    selection = select_slot(
+        preset_identity_candidates=candidates,
+        project_slots=snapshot.filament_slots,
+        project_values=snapshot.project_settings or {},
+        parameter_names=REQUIRED_PARAMETERS,
+    )
+    evidence = [selection.get("reason", "slot selection completed")]
+    evidence.extend(selection.get("evidence", []))
+    evidence.extend(f"unresolved parameter: {name}" for name in selection.get("unresolved_parameters", []))
+    return selection["status"], selection.get("filament_slot_id"), evidence, selection.get("matching_slot_ids", [])
 
 
 def validate_bambu_consistency(
@@ -290,16 +295,23 @@ def validate_bambu_consistency(
     report["source"]["version"] = snapshot.project_context.slicer_version
     report["project_context"] = snapshot.project_context.as_dict()
     report["project_issues"] = snapshot.issues
-    slot_status, slot_id, slot_evidence = _slot_match(snapshot, canonical)
+    slot_status, slot_id, slot_evidence, matching_slot_ids = _slot_match(snapshot, canonical)
     report["selection"] = {
         "status": slot_status,
         "filament_slot_id": slot_id,
+        "matching_slot_ids": matching_slot_ids,
         "evidence": slot_evidence,
     }
     resolved = resolve_bambu_project(snapshot, ResolutionContext(filament_slot_id=slot_id))
     project_values = {item.name: item for item in resolved.parameters}
     for name in REQUIRED_PARAMETERS:
-        entry = _compare_stored_parameter(name, canonical, snapshot.project_settings or {})
+        entry = compare_parameter(
+            name,
+            canonical,
+            snapshot.project_settings or {},
+            slot_id=slot_id,
+            slot_count=len(snapshot.filament_slots),
+        )
         entry["runtime_effective_status"] = (
             project_values[name].status.value if name in project_values else "UNAVAILABLE"
         )
@@ -337,3 +349,57 @@ def validate_bambu_consistency(
         counts[item["status"]] = counts.get(item["status"], 0) + 1
     report["summary"] = counts
     return report
+
+
+def validate_creality_consistency(
+    preset_artifact: Artifact,
+    project_artifact: Artifact,
+    *,
+    context: ProcessingContext | None = None,
+) -> dict[str, Any]:
+    """Run isolated CrealityPrint consistency validation.
+
+    This entry point is intentionally not registered with Preview dispatch.
+    """
+    return validate_native_consistency(
+        CrealityPrintProcessor(), preset_artifact, project_artifact, context=context,
+    )
+
+
+def validate_elegoo_consistency(
+    preset_artifact: Artifact,
+    project_artifact: Artifact,
+    *,
+    context: ProcessingContext | None = None,
+) -> dict[str, Any]:
+    """Run isolated ElegooSlicer consistency validation.
+
+    This entry point is intentionally not registered with Preview dispatch.
+    """
+    return validate_native_consistency(
+        ElegooSlicerProcessor(), preset_artifact, project_artifact, context=context,
+    )
+
+
+def validate_orca_consistency(
+    preset_artifact: Artifact,
+    project_artifact: Artifact,
+    *,
+    context: ProcessingContext | None = None,
+) -> dict[str, Any]:
+    """Run isolated OrcaSlicer consistency validation."""
+    return validate_native_consistency(
+        OrcaSlicerProcessor(), preset_artifact, project_artifact, context=context,
+    )
+
+
+def validate_snapmaker_orca_consistency(
+    preset_artifact: Artifact,
+    project_artifact: Artifact,
+    *,
+    context: ProcessingContext | None = None,
+) -> dict[str, Any]:
+    """Run isolated SnapmakerOrcaSlicer consistency validation."""
+    return validate_native_consistency(
+        SnapmakerOrcaSlicerProcessor(), preset_artifact, project_artifact, context=context,
+    )

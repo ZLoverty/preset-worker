@@ -1,0 +1,13 @@
+{
+  "schema_version": "p9d0.fixture.v1",
+  "slicer": "OrcaSlicer",
+  "slicer_version": null,
+  "printer_model": "Snapmaker U1",
+  "export_mode": null,
+  "project_file": "orca.3mf",
+  "preset_file": "L2002CF @BBL P2S.json",
+  "filament_count": 4,
+  "expected_filament_name": "L2002CF @BBL P2S",
+  "expected_slot": null,
+  "notes": "Project contains four slots; L2002CF @BBL P2S appears in slots 1 and 4, so exact identity matching remains ambiguous."
+}

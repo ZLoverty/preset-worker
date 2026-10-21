@@ -1,0 +1,13 @@
+{
+  "schema_version": "p9d0.fixture.v1",
+  "slicer": "ElegooSlicer",
+  "slicer_version": "01.05.03.05",
+  "printer_model": "Elegoo Centauri",
+  "export_mode": null,
+  "project_file": "elegoo.3mf",
+  "preset_file": "pla_test.json",
+  "filament_count": 1,
+  "expected_filament_name": "pla_test",
+  "expected_slot": 1,
+  "notes": "slice_info.config identifies ElegooSlicer and reports OrcaSlicer-Version 2.4.2."
+}

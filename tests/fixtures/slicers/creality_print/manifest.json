@@ -1,0 +1,13 @@
+{
+  "schema_version": "p9d0.fixture.v1",
+  "slicer": "CrealityPrint",
+  "slicer_version": "7.2.1.5476",
+  "printer_model": "Creality K2 Pro",
+  "export_mode": null,
+  "project_file": "creality.3mf",
+  "preset_file": "pla_test.json",
+  "filament_count": 1,
+  "expected_filament_name": "pla_test",
+  "expected_slot": 1,
+  "notes": "Version and application metadata are present in Metadata/creality.config and Metadata/slice_info.config."
+}
