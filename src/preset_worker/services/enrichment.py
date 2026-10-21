@@ -413,6 +413,7 @@ class CandidateResult:
     base_version_id: str
     base_version_record_id: str | None
     base_version_no_text: str
+    source_artifact: Artifact
     canonical_artifact: Artifact
     diff: UnifiedDiff
     validation: dict[str, Any]
@@ -486,6 +487,7 @@ class SubmissionEnrichment:
             base_version_id=str(fields.get("base_version_id", "")),
             base_version_record_id=None,
             base_version_no_text=str(fields.get(BASE_VERSION_NO_TEXT_FIELD, "")),
+            source_artifact=Artifact(b"", "", None),
             canonical_artifact=Artifact(b"", "", None),
             diff=deserialize_unified_diff(fields.get("diff", "{}")),
             validation=_json_field(fields.get("validation"), {}),
@@ -559,6 +561,7 @@ class SubmissionEnrichment:
             base_version_id=base_version_id,
             base_version_record_id=base_version_record_id,
             base_version_no_text=base_version_no_text,
+            source_artifact=artifact,
             canonical_artifact=processed.canonical_artifact,
             diff=(
                 _timed_diff(processor, base_artifact, processed.canonical_artifact, context, operation="diff_update")
