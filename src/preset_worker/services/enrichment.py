@@ -58,6 +58,8 @@ PRESET_DATA_FIELD = "preset data"
 LEGACY_PRESET_DATA_FIELD = "uploaded_json"
 FORMAL_ENRICHMENT_STATUS = "VALIDATING"
 BASE_VERSION_NO_TEXT_FIELD = "base_version_no_text"
+DATA_NOT_READY_CODE = 1254607
+MAX_DATA_NOT_READY_RETRIES = 3
 
 
 def load_env(path: Path = Path(".env")) -> dict[str, str]:
@@ -93,10 +95,58 @@ def _api_json(url: str, token: str, *, method: str = "GET", payload: dict | None
     except HTTPError as exc:
         status = exc.code
         detail = exc.read().decode("utf-8", errors="replace").strip()
+        try:
+            error_code = json.loads(detail).get("code")
+        except (TypeError, json.JSONDecodeError):
+            error_code = None
+        if (
+            method == "GET"
+            and error_code == DATA_NOT_READY_CODE
+            and retry_count < MAX_DATA_NOT_READY_RETRIES
+        ):
+            delay = min(2**retry_count, 8)
+            logger.warning(
+                "Feishu data not ready; retrying attempt=%d/%d method=%s url=%s delay=%ss",
+                retry_count + 1,
+                MAX_DATA_NOT_READY_RETRIES,
+                method,
+                url,
+                delay,
+            )
+            time.sleep(delay)
+            return _api_json(
+                url,
+                token,
+                method=method,
+                payload=payload,
+                retry_count=retry_count + 1,
+            )
         raise RuntimeError(f"飞书 API 请求失败: {method} {url} -> HTTP {exc.code}: {detail or exc.reason}") from exc
     except (URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"飞书 API 请求失败: {method} {url}: {exc}") from exc
     succeeded = result.get("code", 0) == 0
+    if (
+        result.get("code") == DATA_NOT_READY_CODE
+        and method == "GET"
+        and retry_count < MAX_DATA_NOT_READY_RETRIES
+    ):
+        delay = min(2**retry_count, 8)
+        logger.warning(
+            "Feishu data not ready; retrying attempt=%d/%d method=%s url=%s delay=%ss",
+            retry_count + 1,
+            MAX_DATA_NOT_READY_RETRIES,
+            method,
+            url,
+            delay,
+        )
+        time.sleep(delay)
+        return _api_json(
+            url,
+            token,
+            method=method,
+            payload=payload,
+            retry_count=retry_count + 1,
+        )
     timing = current_timing()
     if timing:
         path = url.split("?", 1)[0]

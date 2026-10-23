@@ -246,9 +246,39 @@ def upload_attachment_fields(
 def migration_id(record_id: str, fields: dict[str, Any]) -> str:
     """Use an existing source ID when available, otherwise a stable ID."""
     value = fields.get(TARGET_SUBMISSION_ID_FIELD)
-    if isinstance(value, str) and value.strip():
-        return value.strip()
+    values = _text_values(value)
+    if values:
+        return values[0]
     return f"MIGRATED-{record_id}"
+
+
+def has_preset_data(source_fields: dict[str, Any]) -> bool:
+    """Return whether the source record contains at least one preset file."""
+    return any(
+        _attachment_value(source_fields.get(field))
+        for field in SOURCE_PROFILE_FIELDS
+    )
+
+
+def pi_code_for_log(source_fields: dict[str, Any]) -> str:
+    """Return a useful PI Code label even when the link text is unavailable."""
+    value = _first_present(source_fields, SOURCE_PI_FIELDS)
+    text_values = _text_values(value)
+    if text_values:
+        return ", ".join(text_values)
+
+    # Legacy cross-base links expose only record_ids.  The preset filename
+    # contains the same PI Code prefix and is available without another API.
+    inferred: list[str] = []
+    for attachment in _attachment_value(_first_present(source_fields, SOURCE_PROFILE_FIELDS)):
+        filename = str(attachment.get("name") or "")
+        code = Path(filename).stem.split(maxsplit=1)[0] if filename else ""
+        if code and code not in inferred:
+            inferred.append(code)
+    if inferred:
+        return ", ".join(inferred) + " (from preset filename)"
+
+    return "(empty)"
 
 
 def build_target_fields(record_id: str, source_fields: dict[str, Any]) -> dict[str, Any]:
@@ -520,8 +550,7 @@ def _existing_submission_ids(
     result: set[str] = set()
     for record in records:
         value = record.get("fields", {}).get(TARGET_SUBMISSION_ID_FIELD)
-        if isinstance(value, str) and value:
-            result.add(value)
+        result.update(_text_values(value))
     return result
 
 
@@ -575,7 +604,18 @@ def main(argv: list[str] | None = None) -> int:
         for record in source_records:
             record_id = str(record.get("record_id") or "")
             source_fields = record.get("fields", {})
+            if not has_preset_data(source_fields):
+                print(f"跳过 {record_id}: preset data 为空")
+                continue
             fields = build_target_fields(record_id, source_fields)
+            submission_id = fields[TARGET_SUBMISSION_ID_FIELD]
+            pi_code = pi_code_for_log(source_fields)
+            if submission_id in existing:
+                print(
+                    f"跳过 {record_id}: pi_code={pi_code} "
+                    f"目标已存在 {submission_id}"
+                )
+                continue
             inferred_slicer = infer_slicer(
                 _first_present(source_fields, SOURCE_PRINTER_FIELDS)
             )
@@ -602,10 +642,6 @@ def main(argv: list[str] | None = None) -> int:
                     "slicer",
                     fields["slicer"],
                 )
-            submission_id = fields[TARGET_SUBMISSION_ID_FIELD]
-            if submission_id in existing:
-                print(f"跳过 {record_id}: 目标已存在 {submission_id}")
-                continue
             plans.append((record_id, source_fields, fields))
             if args.limit and len(plans) >= args.limit:
                 break
@@ -614,8 +650,10 @@ def main(argv: list[str] | None = None) -> int:
         for record_id, _source_fields, fields in plans:
             photo_count = sum(len(fields.get(name, [])) for name in PHOTO_FIELDS)
             preset_data_count = len(fields.get("preset data", []))
+            pi_code = pi_code_for_log(_source_fields)
             print(
-                f"  {record_id} -> {fields[TARGET_SUBMISSION_ID_FIELD]} "
+                f"  {record_id} pi_code={pi_code} -> "
+                f"{fields[TARGET_SUBMISSION_ID_FIELD]} "
                 f"photos={photo_count} preset_data={preset_data_count}"
             )
         if args.dry_run:
@@ -625,12 +663,16 @@ def main(argv: list[str] | None = None) -> int:
         completed = 0
         for record_id, source_fields, fields in plans:
             try:
+                pi_code = pi_code_for_log(source_fields)
                 migrated_fields = copy.deepcopy(fields)
                 migrated_fields.update(
                     upload_attachment_fields(api, source_fields, target_app)
                 )
                 created = api.create_record(target_app, target_table, migrated_fields)
-                print(f"完成 {record_id} -> {created.get('record_id', '(unknown)')}")
+                print(
+                    f"完成 {record_id} pi_code={pi_code} -> "
+                    f"{created.get('record_id', '(unknown)')}"
+                )
                 completed += 1
             except Exception as exc:
                 print(f"失败 {record_id}: {exc}", file=sys.stderr)

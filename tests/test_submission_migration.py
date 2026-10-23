@@ -4,8 +4,10 @@ import unittest
 from scripts.migrate_to_submission import (
     PHOTO_FIELDS,
     build_target_fields,
+    has_preset_data,
     infer_slicer,
     migration_id,
+    pi_code_for_log,
     replace_invalid_preset_version,
 )
 
@@ -50,6 +52,26 @@ class SubmissionMigrationTests(unittest.TestCase):
 
     def test_existing_submission_id_is_reused(self):
         self.assertEqual(migration_id("rec-1", {"submission_id": "S000010"}), "S000010")
+
+    def test_requires_non_empty_preset_data(self):
+        self.assertTrue(has_preset_data({"preset data": [{"file_token": "json-1"}]}))
+        self.assertTrue(has_preset_data({"preset_data": '[{"file_token":"json-1"}]'}))
+        self.assertFalse(has_preset_data({"preset data": []}))
+        self.assertFalse(has_preset_data({"preset data": ""}))
+
+    def test_pi_code_log_falls_back_to_preset_filename(self):
+        self.assertEqual(
+            pi_code_for_log({"PI code": [{"record_ids": ["linked-1"]}], "preset data": [
+                {"name": "L1005 H2D.json"},
+            ]}),
+            "L1005 (from preset filename)",
+        )
+
+    def test_migration_id_accepts_wrapped_text(self):
+        self.assertEqual(
+            migration_id("rec-1", {"submission_id": [{"text": "S000010"}]}),
+            "S000010",
+        )
 
     def test_infers_slicer_from_legacy_printer(self):
         self.assertEqual(infer_slicer("Bambu P2S"), "BambuStudio")
