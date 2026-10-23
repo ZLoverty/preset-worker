@@ -246,7 +246,7 @@ def printer_model(printer: str) -> str:
     directories usually contain only the model, e.g. ``K2Pro`` or ``P2S``.
     """
     value = name_key(printer)
-    for prefix in ("bambulab", "bbl", "creality", "elegoo", "qidi", "prusa", "snapmaker", "anycubic", "flashforge"):
+    for prefix in ("bambulab", "bbl", "creality", "elegoo", "qidi", "prusa", "snapmaker", "anycubic", "flashforge", "bambu"):
         if value.startswith(prefix):
             value = value[len(prefix):]
             break
