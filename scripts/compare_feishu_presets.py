@@ -29,7 +29,19 @@ DEFAULT_LOCAL_ROOTS = {
     "crealityprint": Path(r"C:\Users\zhengyang\Downloads\CrealityPrint_filtered_presets"),
     "elegooslicer": Path(r"C:\Users\zhengyang\Downloads\ElegooSlicer_filtered_presets"),
     "orcaslicer": Path(r"C:\Users\zhengyang\Downloads\OrcaSlicer_filtered_presets"),
+    "snapmakerorcaslicer": Path(r"C:\Users\zhengyang\Downloads\SnapmakerOrcaSlicer_filtered_presets"),
     "prusaslicer": Path(r"C:\Users\zhengyang\Downloads\PrusaSlicer_filtered_presets"),
+}
+DEFAULT_SLICERS = (
+    "BambuStudio",
+    "CrealityPrint",
+    "ElegooSlicer",
+    "OrcaSlicer",
+    "SnapmakerOrcaSlicer",
+    "PrusaSlicer",
+)
+FEISHU_SLICER_NAMES = {
+    "SnapmakerOrcaSlicer": ("OrcaSlicer (Snapmaker)",),
 }
 
 METADATA_KEYS = {
@@ -308,18 +320,65 @@ def write_reports(output: Path, results: list[dict]) -> None:
     (output / "comparison.html").write_text("".join(rows), encoding="utf-8")
 
 
+def write_summary_report(output: Path, summaries: dict[str, dict]) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    statuses = ("different", "local_match_ambiguous", "local_missing", "same")
+    totals = {
+        status: sum(result["summary"].get(status, 0) for result in summaries.values())
+        for status in statuses
+    }
+    rows = [
+        "<!doctype html><meta charset='utf-8'><title>Preset comparison summary</title>",
+        "<style>body{font:14px system-ui;margin:24px} table{border-collapse:collapse;width:100%;margin-bottom:24px}th,td{border:1px solid #ccc;padding:8px 16px;text-align:right}th:first-child,td:first-child{text-align:left}th{background:#eee}.different{color:#b00;font-weight:600}.ambiguous{color:#b36b00;font-weight:600}.missing{color:#666;font-weight:600}.same{color:green;font-weight:600}.ok{color:green}.bad{color:#b00}section{margin-top:32px}section table{margin-bottom:0}</style>",
+        "<h1>Preset comparison summary</h1>",
+        "<table><tr><th>Slicer</th><th>Different</th><th>Local match ambiguous</th><th>Local missing</th><th>Same</th></tr>",
+    ]
+    for slicer, result in summaries.items():
+        counts = result["summary"]
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(slicer)}</td>"
+            f"<td class='different'>{counts.get('different', 0)}</td>"
+            f"<td class='ambiguous'>{counts.get('local_match_ambiguous', 0)}</td>"
+            f"<td class='missing'>{counts.get('local_missing', 0)}</td>"
+            f"<td class='same'>{counts.get('same', 0)}</td>"
+            "</tr>"
+        )
+    rows.append(
+        "<tr><th>Total</th>"
+        + "<th class='different'>"
+        + str(totals["different"])
+        + "</th><th class='ambiguous'>"
+        + str(totals["local_match_ambiguous"])
+        + "</th><th class='missing'>"
+        + str(totals["local_missing"])
+        + "</th><th class='same'>"
+        + str(totals["same"])
+        + "</th>"
+        + "</tr>"
+    )
+    rows.append("</table>")
+    for slicer, result in summaries.items():
+        detail_path = Path(result["output"]) / "comparison.html"
+        detail = detail_path.read_text(encoding="utf-8")
+        detail = re.sub(
+            r"(?is)<!doctype html>|<meta[^>]*>|<title>.*?</title>|<style>.*?</style>",
+            "",
+            detail,
+        ).strip()
+        rows.append(f"<section><h2>{html.escape(slicer)}</h2>{detail}</section>")
+    output.write_text("".join(rows), encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env", type=Path, default=Path(r"C:\Users\zhengyang\Documents\GitHub\preset-worker\.env"))
     parser.add_argument("--local-root", type=Path, default=None)
-    parser.add_argument("--output", type=Path, default=Path("reports/preset-comparison"))
+    parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--preset-table", default=DEFAULT_PRESET_TABLE)
     parser.add_argument("--mapping-table", default=DEFAULT_MAPPING_TABLE)
-    parser.add_argument("--slicer", default="BambuStudio", help="Only compare this slicer (default: BambuStudio)")
+    parser.add_argument("--slicer", default=None, help="Only compare this slicer (default: all slicers)")
     args = parser.parse_args()
-    local_root = args.local_root or DEFAULT_LOCAL_ROOTS.get(
-        args.slicer.casefold(), DEFAULT_LOCAL_ROOTS["bambustudio"]
-    )
 
     client = FeishuClient(load_env(args.env))
     mappings = {}
@@ -330,57 +389,80 @@ def main() -> int:
         if code:
             mappings[code.casefold()] = product
 
-    index = local_index(local_root, preset_extensions(args.slicer))
-    download_dir = args.output / "feishu"
-    download_dir.mkdir(parents=True, exist_ok=True)
-    results: list[dict] = []
-    for record in client.records(args.preset_table):
-        fields = record.get("fields", {})
-        preset_key = text_cell(fields.get("preset_key"))
-        pi_code = text_cell(fields.get("pi_code"))
-        printer = text_cell(fields.get("printer"))
-        slicer = text_cell(fields.get("slicer"))
-        if args.slicer and slicer.casefold() != args.slicer.casefold():
-            continue
-        item = {"preset_key": preset_key, "pi_code": pi_code, "printer": printer, "product_name": mappings.get(pi_code.casefold(), ""), "differences": []}
-        token = attachment_token(fields.get("preset data"))
-        if not token:
-            item["status"] = "missing_feishu_attachment"
-            results.append(item)
-            continue
-        downloaded = download_dir / f"{record.get('record_id', 'unknown')}.json"
-        if not downloaded.exists():
-            client.download_attachment(token, downloaded)
-        try:
-            feishu_data = parse_downloaded_preset(downloaded.read_text(encoding="utf-8"), args.slicer)
-        except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
-            item["status"] = "invalid_feishu_json"
-            item["error"] = str(exc)
-            results.append(item)
-            continue
-        candidates = index.get((pi_code.casefold(), printer_model(printer)), [])
-        expected_product = product_key(mappings.get(pi_code.casefold(), ""))
-        if expected_product:
-            exact_product = [item for item in candidates if product_key(item[1]) == expected_product]
-            if exact_product:
-                candidates = exact_product
-        if len(candidates) != 1:
-            item["status"] = "local_match_ambiguous" if candidates else "local_missing"
-            item["candidate_files"] = [str(path) for path, _product in candidates]
-            results.append(item)
-            continue
-        local_path = candidates[0][0]
-        item["local_file"] = str(local_path)
-        local_data = parse_downloaded_preset(local_path.read_text(encoding="utf-8"), args.slicer)
-        all_diffs = overlap_differences(normalize(feishu_data), normalize(local_data))
-        item["differences"] = all_diffs
-        item["parameter_differences"] = all_diffs
-        item["status"] = "same" if not all_diffs else "different"
-        results.append(item)
+    records = client.records(args.preset_table)
+    slicers = [args.slicer] if args.slicer else list(DEFAULT_SLICERS)
+    summaries: dict[str, dict] = {}
 
-    write_reports(args.output, results)
-    summary = {status: sum(1 for item in results if item["status"] == status) for status in sorted({item["status"] for item in results})}
-    print(json.dumps({"records": len(results), "summary": summary, "output": str(args.output)}, ensure_ascii=False, indent=2))
+    for slicer_name in slicers:
+        output = (
+            args.output
+            if args.output and args.slicer
+            else (args.output or Path("reports")) / f"comparison-{slicer_name}"
+        )
+        local_root = args.local_root or DEFAULT_LOCAL_ROOTS.get(
+            slicer_name.casefold(), DEFAULT_LOCAL_ROOTS["bambustudio"]
+        )
+        index = local_index(local_root, preset_extensions(slicer_name))
+        download_dir = output / "feishu"
+        download_dir.mkdir(parents=True, exist_ok=True)
+        results: list[dict] = []
+        slicer_names = {slicer_name.casefold()}
+        slicer_names.update(name.casefold() for name in FEISHU_SLICER_NAMES.get(slicer_name, ()))
+        for record in records:
+            fields = record.get("fields", {})
+            preset_key = text_cell(fields.get("preset_key"))
+            pi_code = text_cell(fields.get("pi_code"))
+            printer = text_cell(fields.get("printer"))
+            slicer = text_cell(fields.get("slicer"))
+            if slicer.casefold() not in slicer_names:
+                continue
+            item = {"preset_key": preset_key, "pi_code": pi_code, "printer": printer, "product_name": mappings.get(pi_code.casefold(), ""), "differences": []}
+            token = attachment_token(fields.get("preset data"))
+            if not token:
+                item["status"] = "missing_feishu_attachment"
+                results.append(item)
+                continue
+            downloaded = download_dir / f"{record.get('record_id', 'unknown')}.json"
+            if not downloaded.exists():
+                client.download_attachment(token, downloaded)
+            try:
+                feishu_data = parse_downloaded_preset(downloaded.read_text(encoding="utf-8"), slicer_name)
+            except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
+                item["status"] = "invalid_feishu_json"
+                item["error"] = str(exc)
+                results.append(item)
+                continue
+            candidates = index.get((pi_code.casefold(), printer_model(printer)), [])
+            expected_product = product_key(mappings.get(pi_code.casefold(), ""))
+            if expected_product:
+                exact_product = [item for item in candidates if product_key(item[1]) == expected_product]
+                if exact_product:
+                    candidates = exact_product
+            if len(candidates) != 1:
+                item["status"] = "local_match_ambiguous" if candidates else "local_missing"
+                item["candidate_files"] = [str(path) for path, _product in candidates]
+                results.append(item)
+                continue
+            local_path = candidates[0][0]
+            item["local_file"] = str(local_path)
+            local_data = parse_downloaded_preset(local_path.read_text(encoding="utf-8"), slicer_name)
+            all_diffs = overlap_differences(normalize(feishu_data), normalize(local_data))
+            item["differences"] = all_diffs
+            item["parameter_differences"] = all_diffs
+            item["status"] = "same" if not all_diffs else "different"
+            results.append(item)
+
+        write_reports(output, results)
+        summary = {status: sum(1 for item in results if item["status"] == status) for status in sorted({item["status"] for item in results})}
+        summaries[slicer_name] = {"records": len(results), "summary": summary, "output": str(output)}
+
+    summary_output = (
+        args.output.parent / "comparison-summary.html"
+        if args.output and args.slicer
+        else (args.output or Path("reports")) / "comparison-summary.html"
+    )
+    write_summary_report(summary_output, summaries)
+    print(json.dumps({"slicers": summaries, "summary_html": str(summary_output)}, ensure_ascii=False, indent=2))
     return 0
 
 
