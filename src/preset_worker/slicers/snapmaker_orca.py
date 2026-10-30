@@ -6,7 +6,20 @@ from typing import Any
 
 from ..diff import UnifiedDiff
 from .contracts import Artifact, ProcessedArtifact, ProcessingContext, ValidationResult
-from .orca_compatible_core import OrcaCompatibleCore
+from .orca_compatible_core import (
+    IMPORTANT_PARAMETER_PATHS,
+    SYSTEM_METADATA_PATHS,
+    OrcaCompatibleCore,
+)
+
+
+SNAPMAKER_IMPORTANT_PARAMETER_PATHS = frozenset({
+    *IMPORTANT_PARAMETER_PATHS,
+    "graphic_effect_plate_temp",
+    "graphic_effect_plate_temp_initial_layer",
+    "textured_cool_plate_temp",
+    "textured_cool_plate_temp_initial_layer",
+})
 
 
 class SnapmakerOrcaSlicerProcessor:
@@ -15,7 +28,11 @@ class SnapmakerOrcaSlicerProcessor:
     slicer_id = "SnapmakerOrcaSlicer"
 
     def __init__(self) -> None:
-        self._core = OrcaCompatibleCore("SnapmakerOrcaSlicer")
+        self._core = OrcaCompatibleCore(
+            "SnapmakerOrcaSlicer",
+            SNAPMAKER_IMPORTANT_PARAMETER_PATHS,
+            SYSTEM_METADATA_PATHS,
+        )
 
     def parse(self, artifact: Artifact, context: ProcessingContext) -> Any:
         return self._core.parse(artifact, context)

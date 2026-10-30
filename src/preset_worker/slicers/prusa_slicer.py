@@ -59,13 +59,24 @@ def _serialize_document(document: PrusaDocument) -> bytes:
 
 IMPORTANT_PARAMETER_KEYS = frozenset({
     "bed_temperature",
+    "first_layer_bed_temperature",
+    "chamber_temperature",
+    "filament_density",
+    "filament_diameter",
     "fan_always_on",
     "fan_below_layer_time",
     "slowdown_below_layer_time",
+    "cooling",
+    "extrusion_multiplier",
     "filament_max_volumetric_speed",
     "filament_retract_length",
+    "filament_retract_speed",
+    "filament_retract_length_toolchange",
     "max_fan_speed",
     "min_fan_speed",
+    "first_layer_temperature",
+    "extrusion_multiplier",
+    "retract_length",
     "temperature",
 })
 

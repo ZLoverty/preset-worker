@@ -8,7 +8,11 @@ from typing import Any
 
 from ..diff import ChangeType, DiffCategory, DiffChange, UnifiedDiff
 from .contracts import Artifact, InvalidArtifactError, ProcessedArtifact, ProcessingContext, SlicerProcessor, ValidationResult, ValidationStatus
-from .orca_compatible_core import OrcaCompatibleCore
+from .orca_compatible_core import (
+    IMPORTANT_PARAMETER_PATHS,
+    SYSTEM_METADATA_PATHS,
+    OrcaCompatibleCore,
+)
 
 
 def _parse_json(artifact: Artifact) -> Any:
@@ -34,30 +38,9 @@ def _flatten(value: Any, path: str = "") -> dict[str, Any]:
 
 # Conservative Orca classification. Unknown fields intentionally remain
 # visible as OTHER_PARAMETER until their Orca semantics are verified.
-IMPORTANT_PARAMETER_PATHS = frozenset({
-    "filament_flow_ratio",
-    "filament_max_volumetric_speed",
-    "filament_retraction_length",
-    "filament_retraction_speed",
-    "nozzle_temperature",
-    "nozzle_temperature_initial_layer",
-    "nozzle_temperature_range_low",
-    "nozzle_temperature_range_high",
-    "fan_min_speed",
-    "fan_max_speed",
-})
-
-SYSTEM_METADATA_PATHS = frozenset({
-    "type",
-    "name",
-    "from",
-    "instantiation",
-    "inherits",
-    "setting_id",
-    "filament_id",
-    "filament_settings_id",
-    "pm_method_version",
-})
+# Kept as compatibility exports for callers that imported the old module
+# constants.  Classification is shared with OrcaCompatibleCore so the two
+# Orca-family processors cannot drift apart.
 
 
 def _category(path: str) -> DiffCategory:

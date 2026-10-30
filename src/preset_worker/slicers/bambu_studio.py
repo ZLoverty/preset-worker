@@ -40,26 +40,49 @@ def _flatten(value: Any, path: str = "") -> dict[str, Any]:
 
 
 IMPORTANT_PARAMETER_PATHS = frozenset({
+    # Metadata/project_settings.config contains all eight canonical
+    # cross-slicer material parameters, even when a preset inherits them.
+    "filament_flow_ratio",
+    "filament_max_volumetric_speed",
+    "fan_min_speed",
+    "fan_max_speed",
+    "fan_cooling_layer_time",
+    "slow_down_layer_time",
+    "slow_down_for_layer_cooling",
+    "cooling_slowdown_logic",
     "nozzle_temperature",
     "nozzle_temperature_initial_layer",
-    "filament_max_volumetric_speed",
-    "filament_flow_ratio",
-    "chamber_temperatures",
-    "fan_max_speed",
-    "fan_min_speed",
-    "fan_cooling_layer_time",
-    "slow_down_layer_time", 
-    "filament_retraction_length", 
-    "textured_plate_temp",   
+    "nozzle_temperature_range_low",
+    "nozzle_temperature_range_high",
+    "pressure_advance",
+    "enable_pressure_advance",
+    "filament_retraction_length",
+    "retraction_length",
+    "retraction_speed",
+    "retraction_minimum_travel",
+    "retract_length_toolchange",
+    "chamber_temperature",
+    "cool_plate_temp",
+    "cool_plate_temp_initial_layer",
+    "textured_plate_temp",
+    "textured_plate_temp_initial_layer",
+    "hot_plate_temp",
+    "hot_plate_temp_initial_layer",
+    "eng_plate_temp",
+    "eng_plate_temp_initial_layer",
+    "customized_plate_temp",
+    "customized_plate_temp_initial_layer",
 })
 
 SYSTEM_METADATA_PATHS = frozenset({
+    "from",
     "name",
     "version",
     "inherits",
     "pm_method_version",
     "filament_settings_id",
     "printer_settings_id",
+    "print_settings_id",
     "process_settings_id",
 })
 
