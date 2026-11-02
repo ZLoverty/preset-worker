@@ -1,5 +1,9 @@
 # Release Notes
 
+## v0.3.1
+
+Update important keys based on real slicer profiles.
+
 ## v0.3.0
 
 3MF-aware consistency validation and cross-slicer workflow integration.
