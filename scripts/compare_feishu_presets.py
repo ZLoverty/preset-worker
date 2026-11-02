@@ -25,12 +25,12 @@ MEDIA_URL = "https://open.feishu.cn/open-apis/drive/v1/medias/{}/download"
 DEFAULT_PRESET_TABLE = "tblVz1q8G93W6aLg"
 DEFAULT_MAPPING_TABLE = "tblPQnLTactABfxQ"
 DEFAULT_LOCAL_ROOTS = {
-    "bambustudio": Path(r"C:\Users\zhengyang\Downloads\BambuStudio_filtered_presets"),
-    "crealityprint": Path(r"C:\Users\zhengyang\Downloads\CrealityPrint_filtered_presets"),
-    "elegooslicer": Path(r"C:\Users\zhengyang\Downloads\ElegooSlicer_filtered_presets"),
-    "orcaslicer": Path(r"C:\Users\zhengyang\Downloads\OrcaSlicer_filtered_presets"),
-    "snapmakerorcaslicer": Path(r"C:\Users\zhengyang\Downloads\SnapmakerOrcaSlicer_filtered_presets"),
-    "prusaslicer": Path(r"C:\Users\zhengyang\Downloads\PrusaSlicer_filtered_presets"),
+    "bambustudio": Path("~/Downloads/BambuStudio_filtered_presets").expanduser(),
+    "crealityprint": Path("~/Downloads/CrealityPrint_filtered_presets").expanduser(),
+    "elegooslicer": Path("~/Downloads/ElegooSlicer_filtered_presets").expanduser(),
+    "orcaslicer": Path("~/Downloads/OrcaSlicer_filtered_presets").expanduser(),
+    "snapmakerorcaslicer": Path("~/Downloads/SnapmakerOrcaSlicer_filtered_presets").expanduser(),
+    "prusaslicer": Path("~/Downloads/PrusaSlicer_filtered_presets").expanduser(),
 }
 DEFAULT_SLICERS = (
     "BambuStudio",
@@ -372,7 +372,7 @@ def write_summary_report(output: Path, summaries: dict[str, dict]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env", type=Path, default=Path(r"C:\Users\zhengyang\Documents\GitHub\preset-worker\.env"))
+    parser.add_argument("--env", type=Path, default=Path("~/Documents/GitHub/preset-worker/.env").expanduser())
     parser.add_argument("--local-root", type=Path, default=None)
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--preset-table", default=DEFAULT_PRESET_TABLE)
