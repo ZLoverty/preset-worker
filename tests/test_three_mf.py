@@ -32,6 +32,16 @@ class ThreeMfTests(unittest.TestCase):
         self.assertEqual(snapshot.filament_slots[0].settings_id, "A")
         self.assertEqual(snapshot.raw_parameters[0].raw_value, ["0.98"])
 
+    def test_raw_extraction_accepts_slicer_important_parameter_set(self):
+        data = make_3mf({
+            "filament_settings_id": ["A"],
+            "new_material_parameter": ["42"],
+            "unrelated_project_setting": "ignored",
+        })
+        snapshot = parse_bambu_3mf(data, parameter_names=frozenset({"new_material_parameter"}))
+        self.assertEqual([item.name for item in snapshot.raw_parameters], ["new_material_parameter"])
+        self.assertEqual(snapshot.raw_parameters[0].raw_value, ["42"])
+
     def test_array_cardinality_is_not_assumed_to_be_slot_index(self):
         data = make_3mf({
             "filament_settings_id": ["A"],

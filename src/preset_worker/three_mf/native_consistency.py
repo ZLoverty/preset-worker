@@ -120,7 +120,10 @@ def validate_native_consistency(
     )
 
     try:
-        snapshot = parse_bambu_3mf(project_artifact)
+        snapshot = parse_bambu_3mf(
+            project_artifact,
+            parameter_names=processor.important_parameter_paths,
+        )
     except Exception as exc:
         report["errors"].append(f"invalid {slicer_id} 3MF: {exc}")
         report["selection"] = {"status": "UNRESOLVED", "filament_slot_id": None, "matching_slot_ids": [], "evidence": ["project archive could not be safely parsed"]}

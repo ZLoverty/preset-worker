@@ -124,6 +124,7 @@ def _calculate_diff(old: Any | None, new: Any) -> UnifiedDiff:
 
 class CrealityPrintProcessor(SlicerProcessor):
     slicer_id = "CrealityPrint"
+    important_parameter_paths = IMPORTANT_PARAMETER_PATHS
 
     def parse(self, artifact: Artifact, context: ProcessingContext) -> Any:
         return _parse_json(artifact)

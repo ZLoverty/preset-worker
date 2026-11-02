@@ -74,6 +74,7 @@ def _diff_values(base: Any, candidate: Any) -> UnifiedDiff:
 
 class OrcaSlicerProcessor(SlicerProcessor):
     slicer_id = "OrcaSlicer"
+    important_parameter_paths = IMPORTANT_PARAMETER_PATHS
 
     def __init__(self) -> None:
         self._core = OrcaCompatibleCore("OrcaSlicer")

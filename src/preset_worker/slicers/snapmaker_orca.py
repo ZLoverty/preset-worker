@@ -26,6 +26,7 @@ class SnapmakerOrcaSlicerProcessor:
     """Distinct business identity over the evidence-backed Orca core."""
 
     slicer_id = "SnapmakerOrcaSlicer"
+    important_parameter_paths = SNAPMAKER_IMPORTANT_PARAMETER_PATHS
 
     def __init__(self) -> None:
         self._core = OrcaCompatibleCore(

@@ -121,6 +121,7 @@ def _calculate_diff(old: Any | None, new: Any) -> UnifiedDiff:
 
 class BambuStudioProcessor(SlicerProcessor):
     slicer_id = "BambuStudio"
+    important_parameter_paths = IMPORTANT_PARAMETER_PATHS
 
     def parse(self, artifact: Artifact, context: ProcessingContext) -> Any:
         return parse_json_artifact(artifact.content)

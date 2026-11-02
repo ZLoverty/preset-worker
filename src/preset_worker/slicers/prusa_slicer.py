@@ -70,8 +70,6 @@ IMPORTANT_PARAMETER_KEYS = frozenset({
     "extrusion_multiplier",
     "filament_max_volumetric_speed",
     "filament_retract_length",
-    "filament_retract_speed",
-    "filament_retract_length_toolchange",
     "max_fan_speed",
     "min_fan_speed",
     "first_layer_temperature",
@@ -113,6 +111,7 @@ def _change(old: dict[str, str], new: dict[str, str], key: str) -> DiffChange | 
 
 class PrusaSlicerProcessor(SlicerProcessor):
     slicer_id = "PrusaSlicer"
+    important_parameter_paths = IMPORTANT_PARAMETER_KEYS
 
     def parse(self, artifact: Artifact, context: ProcessingContext) -> Any:
         return _parse_ini(artifact)

@@ -63,6 +63,8 @@ class ProcessedArtifact:
 
 class SlicerProcessor(Protocol):
     slicer_id: str
+    # Names used by the 3MF extractor as well as JSON diff classification.
+    important_parameter_paths: frozenset[str]
 
     def parse(self, artifact: Artifact, context: ProcessingContext) -> Any: ...
     def validate_source(self, source: Any, context: ProcessingContext) -> ValidationResult: ...
