@@ -46,7 +46,6 @@ IMPORTANT_PARAMETER_PATHS = frozenset({
     "fan_max_speed",
     "fan_min_speed",
     "slow_down_layer_time",
-    "slow_down_for_layer_cooling",
     "nozzle_temperature",
     "nozzle_temperature_initial_layer",
     "pressure_advance",
