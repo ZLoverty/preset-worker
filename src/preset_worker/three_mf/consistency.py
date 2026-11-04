@@ -292,7 +292,10 @@ def validate_bambu_consistency(
         "original_parameters": {name: preset_original.get(name) for name in REQUIRED_PARAMETERS if name in preset_original},
     }
 
-    snapshot = parse_bambu_3mf(project_artifact)
+    snapshot = parse_bambu_3mf(
+        project_artifact,
+        parameter_names=processor.important_parameter_paths,
+    )
     report["source"]["version"] = snapshot.project_context.slicer_version
     report["project_context"] = snapshot.project_context.as_dict()
     report["project_issues"] = snapshot.issues

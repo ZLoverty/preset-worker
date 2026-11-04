@@ -45,17 +45,20 @@ def _flatten(value: Any, path: str = "") -> dict[str, Any]:
 
 
 IMPORTANT_PARAMETER_PATHS = frozenset({
+    "filament_flow_ratio",
+    "filament_max_volumetric_speed",
+    "fan_min_speed",
+    "fan_max_speed",
+    "fan_cooling_layer_time",
+    "slow_down_layer_time",
+    "slow_down_for_layer_cooling",
     "nozzle_temperature",
     "nozzle_temperature_initial_layer",
-    "filament_max_volumetric_speed",
-    "filament_flow_ratio",
-    "chamber_temperatures",
-    "fan_max_speed",
-    "fan_min_speed",
-    "fan_cooling_layer_time",
-    "slow_down_layer_time", 
-    "filament_retraction_length", 
-    "textured_plate_temp", 
+    "pressure_advance",
+    "filament_retraction_length",
+    "retraction_length",
+    "chamber_temperature",
+    "textured_plate_temp",
 })
 
 SYSTEM_METADATA_PATHS = frozenset({
@@ -66,6 +69,8 @@ SYSTEM_METADATA_PATHS = frozenset({
     "is_custom_defined",
     "name",
     "pm_method_version",
+    "printer_settings_id",
+    "print_settings_id",
     "version",
 })
 
@@ -101,6 +106,7 @@ def _calculate_diff(old: Any | None, new: Any) -> UnifiedDiff:
 
 class CrealityPrintProcessor(SlicerProcessor):
     slicer_id = "CrealityPrint"
+    important_parameter_paths = IMPORTANT_PARAMETER_PATHS
 
     def parse(self, artifact: Artifact, context: ProcessingContext) -> Any:
         return _parse_json(artifact)

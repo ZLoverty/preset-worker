@@ -40,26 +40,31 @@ def _flatten(value: Any, path: str = "") -> dict[str, Any]:
 
 
 IMPORTANT_PARAMETER_PATHS = frozenset({
+    # Metadata/project_settings.config contains all eight canonical
+    # cross-slicer material parameters, even when a preset inherits them.
+    "filament_flow_ratio",
+    "filament_max_volumetric_speed",
+    "fan_min_speed",
+    "fan_max_speed",
+    "fan_cooling_layer_time",
+    "slow_down_layer_time",
     "nozzle_temperature",
     "nozzle_temperature_initial_layer",
-    "filament_max_volumetric_speed",
-    "filament_flow_ratio",
+    "filament_retraction_length",
+    "retraction_length",
     "chamber_temperatures",
-    "fan_max_speed",
-    "fan_min_speed",
-    "fan_cooling_layer_time",
-    "slow_down_layer_time", 
-    "filament_retraction_length", 
-    "textured_plate_temp",   
+    "textured_plate_temp",
 })
 
 SYSTEM_METADATA_PATHS = frozenset({
+    "from",
     "name",
     "version",
     "inherits",
     "pm_method_version",
     "filament_settings_id",
     "printer_settings_id",
+    "print_settings_id",
     "process_settings_id",
 })
 
@@ -98,6 +103,7 @@ def _calculate_diff(old: Any | None, new: Any) -> UnifiedDiff:
 
 class BambuStudioProcessor(SlicerProcessor):
     slicer_id = "BambuStudio"
+    important_parameter_paths = IMPORTANT_PARAMETER_PATHS
 
     def parse(self, artifact: Artifact, context: ProcessingContext) -> Any:
         return parse_json_artifact(artifact.content)

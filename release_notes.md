@@ -1,5 +1,9 @@
 # Release Notes
 
+## v0.3.1
+
+Update important keys based on real slicer profiles.
+
 ## v0.3.0
 
 3MF-aware consistency validation and cross-slicer workflow integration.
@@ -40,7 +44,8 @@
 - Changed approved Update projection to field-level photo patch semantics:
   newly submitted photos replace only their corresponding fields, while
   missing or empty fields preserve existing Preset photos.
-- Added explicit rejection of multiple attachments in a single-photo field.
+- Preserved all attachments submitted for a photo field when replacing that
+  field; the Worker does not impose an artificial per-field attachment limit.
 - Preserved existing Feishu attachment metadata and idempotent approval
   behavior without introducing new storage or schema fields.
 - Documented that PresetVersion currently has no complete effective-photo

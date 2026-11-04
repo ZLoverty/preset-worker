@@ -40,17 +40,19 @@ def _flatten(value: Any, path: str = "") -> dict[str, Any]:
 
 
 IMPORTANT_PARAMETER_PATHS = frozenset({
-    "nozzle_temperature",
-    "nozzle_temperature_initial_layer",
-    "filament_max_volumetric_speed",
     "filament_flow_ratio",
-    "chamber_temperatures",
+    "filament_max_volumetric_speed",
+    "fan_cooling_layer_time",
     "fan_max_speed",
     "fan_min_speed",
-    "fan_cooling_layer_time",
-    "slow_down_layer_time", 
-    "filament_retraction_length", 
-    "textured_plate_temp", 
+    "slow_down_layer_time",
+    "nozzle_temperature",
+    "nozzle_temperature_initial_layer",
+    "pressure_advance",
+    "filament_retraction_length",
+    "retraction_length",
+    "chamber_temperatures",
+    "textured_plate_temp",
 })
 
 SYSTEM_METADATA_PATHS = frozenset({
@@ -59,6 +61,8 @@ SYSTEM_METADATA_PATHS = frozenset({
     "inherits",
     "name",
     "pm_method_version",
+    "printer_settings_id",
+    "print_settings_id",
     "version",
 })
 
@@ -94,6 +98,7 @@ def _calculate_diff(old: Any | None, new: Any) -> UnifiedDiff:
 
 class ElegooSlicerProcessor(SlicerProcessor):
     slicer_id = "ElegooSlicer"
+    important_parameter_paths = IMPORTANT_PARAMETER_PATHS
 
     def parse(self, artifact: Artifact, context: ProcessingContext) -> Any:
         return _parse_json(artifact)

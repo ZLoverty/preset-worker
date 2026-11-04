@@ -11,17 +11,19 @@ from .contracts import Artifact, InvalidArtifactError, ProcessedArtifact, Proces
 
 
 IMPORTANT_PARAMETER_PATHS = frozenset({
+    "filament_flow_ratio",
+    "filament_max_volumetric_speed",
+    "fan_min_speed",
+    "fan_max_speed",
+    "fan_cooling_layer_time",
+    "slow_down_layer_time",
     "nozzle_temperature",
     "nozzle_temperature_initial_layer",
-    "filament_max_volumetric_speed",
-    "filament_flow_ratio",
-    "chamber_temperatures",
-    "fan_max_speed",
-    "fan_min_speed",
-    "fan_cooling_layer_time",
-    "slow_down_layer_time", 
-    "filament_retraction_length", 
-    "textured_plate_temp", 
+    "pressure_advance",
+    "filament_retraction_length",
+    "retraction_length",
+    "chamber_temperature",
+    "textured_plate_temp",
 })
 
 SYSTEM_METADATA_PATHS = frozenset({
@@ -33,6 +35,11 @@ SYSTEM_METADATA_PATHS = frozenset({
     "setting_id",
     "filament_id",
     "filament_settings_id",
+    "compatible_printers",
+    "is_custom_defined",
+    "printer_settings_id",
+    "print_settings_id",
+    "version",
     "pm_method_version",
 })
 
@@ -58,29 +65,38 @@ def flatten(value: Any, path: str = "") -> dict[str, Any]:
     return {path: value}
 
 
-def category(path: str) -> DiffCategory:
+def category(
+    path: str,
+    important_parameter_paths: frozenset[str] = IMPORTANT_PARAMETER_PATHS,
+    system_metadata_paths: frozenset[str] = SYSTEM_METADATA_PATHS,
+) -> DiffCategory:
     field = path.split("[", 1)[0]
-    if field in IMPORTANT_PARAMETER_PATHS:
+    if field in important_parameter_paths:
         return DiffCategory.IMPORTANT_PARAMETER
-    if field in SYSTEM_METADATA_PATHS:
+    if field in system_metadata_paths:
         return DiffCategory.SYSTEM_METADATA
     return DiffCategory.OTHER_PARAMETER
 
 
-def calculate_diff(old: Any | None, new: Any) -> UnifiedDiff:
+def calculate_diff(
+    old: Any | None,
+    new: Any,
+    important_parameter_paths: frozenset[str] = IMPORTANT_PARAMETER_PATHS,
+    system_metadata_paths: frozenset[str] = SYSTEM_METADATA_PATHS,
+) -> UnifiedDiff:
     old_flat = flatten(old) if old is not None else {}
     new_flat = flatten(new)
     changes: list[DiffChange] = []
     changes.extend(
-        DiffChange(path, ChangeType.ADDED, category(path), None, new_flat[path])
+        DiffChange(path, ChangeType.ADDED, category(path, important_parameter_paths, system_metadata_paths), None, new_flat[path])
         for path in new_flat.keys() - old_flat.keys()
     )
     changes.extend(
-        DiffChange(path, ChangeType.REMOVED, category(path), old_flat[path], None)
+        DiffChange(path, ChangeType.REMOVED, category(path, important_parameter_paths, system_metadata_paths), old_flat[path], None)
         for path in old_flat.keys() - new_flat.keys()
     )
     changes.extend(
-        DiffChange(path, ChangeType.MODIFIED, category(path), old_flat[path], new_flat[path])
+        DiffChange(path, ChangeType.MODIFIED, category(path, important_parameter_paths, system_metadata_paths), old_flat[path], new_flat[path])
         for path in new_flat.keys() & old_flat.keys()
         if old_flat[path] != new_flat[path]
     )
@@ -90,8 +106,15 @@ def calculate_diff(old: Any | None, new: Any) -> UnifiedDiff:
 class OrcaCompatibleCore:
     """Shared behavior with no business slicer identity of its own."""
 
-    def __init__(self, label: str):
+    def __init__(
+        self,
+        label: str,
+        important_parameter_paths: frozenset[str] = IMPORTANT_PARAMETER_PATHS,
+        system_metadata_paths: frozenset[str] = SYSTEM_METADATA_PATHS,
+    ):
         self.label = label
+        self.important_parameter_paths = important_parameter_paths
+        self.system_metadata_paths = system_metadata_paths
 
     def parse(self, artifact: Artifact, context: ProcessingContext) -> Any:
         return parse_json(artifact)
@@ -149,7 +172,12 @@ class OrcaCompatibleCore:
     def diff(self, base_artifact: Artifact | None, candidate_artifact: Artifact, context: ProcessingContext) -> UnifiedDiff:
         base = parse_json(base_artifact) if base_artifact is not None else None
         candidate = parse_json(candidate_artifact)
-        return calculate_diff(base, candidate)
+        return calculate_diff(
+            base,
+            candidate,
+            self.important_parameter_paths,
+            self.system_metadata_paths,
+        )
 
     def process(self, processor: Any, artifact: Artifact, context: ProcessingContext) -> ProcessedArtifact:
         source = self.parse(artifact, context)

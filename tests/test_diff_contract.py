@@ -30,7 +30,10 @@ class DiffContractTests(unittest.TestCase):
         )
         changes = {change.path: change for change in result.changes}
         self.assertEqual(changes["temperature"].change_type, ChangeType.MODIFIED)
-        self.assertEqual(changes["temperature"].category, DiffCategory.IMPORTANT_PARAMETER)
+        # The Bambu JSON contract does not establish a generic ``temperature``
+        # field as one of its important native parameters.  Slicer-specific
+        # temperature paths remain classified explicitly where evidenced.
+        self.assertEqual(changes["temperature"].category, DiffCategory.OTHER_PARAMETER)
         self.assertEqual(changes["removed"].change_type, ChangeType.REMOVED)
         self.assertEqual(changes["added"].change_type, ChangeType.ADDED)
         self.assertEqual(changes["unknown"].category, DiffCategory.OTHER_PARAMETER)
