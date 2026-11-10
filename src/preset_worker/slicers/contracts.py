@@ -9,6 +9,18 @@ from typing import Any, Protocol
 from ..diff import UnifiedDiff
 
 
+SLICER_ID_ALIASES = {
+    "OrcaSlicer (Snapmaker)": "SnapmakerOrcaSlicer",
+    "OrcaSlicer Snapmaker": "SnapmakerOrcaSlicer",
+    "Orca Slicer (Snapmaker)": "SnapmakerOrcaSlicer",
+}
+
+
+def canonical_slicer_id(value: str) -> str:
+    normalized = value.strip()
+    return SLICER_ID_ALIASES.get(normalized, normalized)
+
+
 class ValidationStatus(str, Enum):
     VALID = "valid"
     INVALID_USER_ARTIFACT = "invalid_user_artifact"
@@ -96,11 +108,7 @@ def process_artifact(
 
 
 class SlicerProcessorRegistry:
-    _ALIASES = {
-        "OrcaSlicer (Snapmaker)": "SnapmakerOrcaSlicer",
-        "OrcaSlicer Snapmaker": "SnapmakerOrcaSlicer",
-        "Orca Slicer (Snapmaker)": "SnapmakerOrcaSlicer",
-    }
+    _ALIASES = SLICER_ID_ALIASES
 
     def __init__(self, processors: list[SlicerProcessor] | None = None):
         self._processors = {processor.slicer_id: processor for processor in processors or []}
@@ -108,9 +116,13 @@ class SlicerProcessorRegistry:
     def register(self, processor: SlicerProcessor) -> None:
         self._processors[processor.slicer_id] = processor
 
+    @property
+    def registered_ids(self) -> tuple[str, ...]:
+        """Canonical processor identifiers in deterministic order."""
+        return tuple(sorted(self._processors))
+
     def get(self, slicer_id: str) -> SlicerProcessor | None:
-        normalized_id = self._ALIASES.get(slicer_id.strip(), slicer_id.strip())
-        return self._processors.get(normalized_id)
+        return self._processors.get(canonical_slicer_id(slicer_id))
 
     def require(self, slicer_id: str) -> SlicerProcessor:
         processor = self.get(slicer_id)

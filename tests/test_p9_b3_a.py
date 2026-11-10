@@ -27,6 +27,22 @@ class P9B3ATests(unittest.TestCase):
         client = Client("UnknownSlicer")
         self.assertEqual(build_consistency_report(client, client.record, Candidate()), "")
 
+    def test_explicitly_unsupported_consistency_is_clear(self):
+        client = Client("NativeOnlySlicer")
+        with patch.dict("preset_worker.services.consistency_preview.CONSISTENCY_CAPABILITIES", {"NativeOnlySlicer": "UNSUPPORTED"}, clear=True):
+            payload = json.loads(build_consistency_report(client, client.record, Candidate()))
+        self.assertEqual(payload["status"], "UNSUPPORTED")
+        self.assertEqual(payload["error"]["code"], "CONSISTENCY_UNSUPPORTED")
+
+    def test_supported_missing_validator_is_configuration_error(self):
+        client = Client("BrokenSlicer")
+        with patch.dict("preset_worker.services.consistency_preview.CONSISTENCY_CAPABILITIES", {"BrokenSlicer": "SUPPORTED"}, clear=True):
+            with patch.dict("preset_worker.services.consistency_preview.CONSISTENCY_VALIDATORS", {}, clear=True):
+                payload = json.loads(build_consistency_report(client, client.record, Candidate()))
+        self.assertEqual(payload["status"], "ERROR")
+        self.assertEqual(payload["error"]["code"], "CONSISTENCY_VALIDATOR_NOT_REGISTERED")
+        self.assertEqual(payload["error"]["slicer_id"], "BrokenSlicer")
+
     def test_missing_project_is_empty(self):
         client = Client(project=False)
         self.assertEqual(build_consistency_report(client, client.record, Candidate()), "")

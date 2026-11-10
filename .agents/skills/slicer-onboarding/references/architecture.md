@@ -7,6 +7,7 @@ Verify this reference against the current repository before each onboarding.
 - Package: `src/preset_worker/`; tests: `tests/`; fixtures: `tests/fixtures/slicers/`.
 - Native boundary: `slicers/contracts.py` defines `Artifact`, `ProcessingContext`, `ValidationResult`, `ProcessedArtifact`, `SlicerProcessor`, and `SlicerProcessorRegistry`.
 - Composition: `slicers/registry.py:default_processor_registry()` registers processors. Aliases are also handled in `contracts.py:SlicerProcessorRegistry` and `registry.py:canonical_slicer_id`; check both.
+- Consistency capability guard: `slicers/capabilities.py` declares `SUPPORTED`/`UNSUPPORTED` and exposes `check_registration_completeness(processor_registry, validators, capabilities)`. The declaration is checked against actual registries; it is not a replacement registry.
 - Native workflow: `services/enrichment.py:SubmissionEnrichment.process_candidate()` selects a processor, creates context, processes the artifact, computes diff, and returns the candidate. `slicers/contracts.py:process_artifact()` expresses the parse -> validate -> normalize -> policy -> canonical validate -> serialize stages.
 - Preview: `services/preview.py:PreviewService.preview_submission()` processes `PREVIEW_REQUESTED`, then optionally builds consistency.
 - Runtime: `runtime.py:WorkerRuntime` dispatches Preview, enrichment, and publication separately.
@@ -23,6 +24,8 @@ Verify this reference against the current repository before each onboarding.
 - Actual Preview/Submit dispatch: `services/consistency_preview.py:CONSISTENCY_VALIDATORS`.
 
 Native Preset support and 3MF consistency are separate capabilities. A processor in the registry does not prove a validator is registered or reachable. Inheritance is currently generally preserved, not resolved: do not claim effective inherited values without new evidence and approved implementation.
+
+For a new slicer, add a canonical capability declaration. `SUPPORTED` requires a validator in `services/consistency_preview.py:CONSISTENCY_VALIDATORS`; `UNSUPPORTED` permits Native Preset processing without a validator. Run the checker in focused registration tests. Dispatch reports an internal registration error for a declared supported slicer whose validator is missing, and an explicit `UNSUPPORTED` envelope for a declared unsupported slicer.
 
 ## Onboarding inspection
 

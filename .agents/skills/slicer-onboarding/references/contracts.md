@@ -4,6 +4,8 @@
 
 `Artifact` is opaque bytes plus filename and optional media type. `ProcessingContext` carries `pi_code`, `printer`, `slicer`, and `pm_method_version`. A processor supplies `parse`, `validate_source`, `normalize`, `apply_company_policy`, `validate_canonical`, `serialize`, and `diff`; many concrete processors also expose `process`.
 
+Consistency registration is declared in `slicers/capabilities.py` with `SUPPORTED` or `UNSUPPORTED`. `check_registration_completeness()` returns deterministic `RegistrationIssue` values with `code`, canonical `slicer_id`, and `message`. It detects missing declarations, missing expected validators, orphan validators, unknown declarations, invalid declarations, and unsupported/validator conflicts. Canonical aliases are normalized through the shared `canonical_slicer_id()`.
+
 Validation statuses are `valid`, `invalid_user_artifact`, `unsupported_slicer`, and `internal_processing_failure`. Native diff changes are `ADDED`, `REMOVED`, or `MODIFIED`, classified as `IMPORTANT_PARAMETER`, `SYSTEM_METADATA`, or `OTHER_PARAMETER`. Diff output must be deterministic.
 
 Do not assume one native format: current processors include UTF-8 JSON and Prusa INI/text. Preserve unknown fields when the existing processor does so. Canonical names and `pm_method_version` are context-authoritative where the processor contract requires them.

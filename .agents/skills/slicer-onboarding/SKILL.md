@@ -29,7 +29,7 @@ Always complete discovery and semantic verification before implementation. A blo
 4. Identify reusable format-family components and build a capability-gap assessment.
 5. Propose native and 3MF mappings with source paths and evidence; ask only unresolved semantic questions.
 6. In IMPLEMENTATION, change only the missing processor/adapter, capability registration, fixtures, and targeted tests. Do not refactor shared catalogs or runtime behavior.
-7. In VERIFICATION, run targeted tests, registration checks, parameter coverage checks, cross-slicer regressions, Preview/Submit integration, and publication only when claimed.
+7. In VERIFICATION, run `python -m unittest tests.test_registration_completeness tests.test_p9_b3_a` (with `PYTHONPATH=src` when needed), then registration checks, parameter coverage checks, cross-slicer regressions, Preview/Submit integration, and publication only when claimed.
 8. Complete `templates/onboarding-report.md` and `templates/compatibility-matrix.md` with `CONFIRMED`, `INFERRED`, or `NOT_VERIFIED` evidence labels.
 
 ## Non-negotiable guardrails

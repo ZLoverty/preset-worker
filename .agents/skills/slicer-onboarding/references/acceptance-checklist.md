@@ -27,6 +27,8 @@ Do not claim full completion while a mandatory check is missing.
 ## Consistency
 
 - [ ] Validator registered and reachable if claimed.
+- [ ] Capability declaration is present and canonical.
+- [ ] `check_registration_completeness()` passes; synthetic missing/orphan/conflict cases are covered.
 - [ ] Matching, mismatch, missing, and unresolved cases tested; ambiguous cases tested when relevant.
 - [ ] Exact values, source paths, normalization and report schema asserted.
 - [ ] Extracted-but-uncompared parameters detected and disclosed.
@@ -38,6 +40,7 @@ Do not claim full completion while a mandatory check is missing.
 - [ ] Publication tested or marked `Not Verified`.
 - [ ] Feishu mapping unchanged unless separately approved.
 - [ ] Targeted and cross-slicer tests run.
+- [ ] Focused command includes `python -m unittest tests.test_registration_completeness tests.test_p9_b3_a` (with `PYTHONPATH=src` when running from a source checkout).
 - [ ] Current failures classified as pre-existing, new, environment-dependent, or undetermined.
 - [ ] No unrelated production behavior changed.
 

@@ -25,6 +25,13 @@ from .contracts import (
     ValidationResult,
     ValidationStatus,
 )
+from .capabilities import (
+    DEFAULT_CONSISTENCY_CAPABILITIES,
+    SUPPORTED,
+    UNSUPPORTED,
+    RegistrationIssue,
+    check_registration_completeness,
+)
 from .registry import default_processor_registry
 
 __all__ = [
@@ -50,4 +57,9 @@ __all__ = [
     "ValidationResult",
     "ValidationStatus",
     "default_processor_registry",
+    "DEFAULT_CONSISTENCY_CAPABILITIES",
+    "SUPPORTED",
+    "UNSUPPORTED",
+    "RegistrationIssue",
+    "check_registration_completeness",
 ]
