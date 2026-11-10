@@ -31,7 +31,8 @@ Always complete discovery and semantic verification before implementation. A blo
 6. In IMPLEMENTATION, change only the missing processor/adapter, capability registration, fixtures, and targeted tests. Shared Native Diff catalogs may be changed only when the task explicitly requires catalog consolidation; preserve the diff contract and do not change 3MF runtime behavior as a side effect.
 7. For Native Diff classification, use `src/preset_worker/slicers/parameter_catalog.py` as the canonical Important Parameter Catalog. Add aliases and slicer-specific native paths there, keep system metadata precedence explicit, and verify exact/indexed paths. Do not treat catalog membership as proof of 3MF comparability.
 8. In VERIFICATION, run `python -m unittest tests.test_registration_completeness tests.test_p9_b3_a tests.test_parameter_catalog` (with `PYTHONPATH=src` when needed), then registration checks, parameter coverage checks, cross-slicer regressions, Preview/Submit integration, and publication only when claimed.
-8. Complete `templates/onboarding-report.md` and `templates/compatibility-matrix.md` with `CONFIRMED`, `INFERRED`, or `NOT_VERIFIED` evidence labels.
+9. For consistency audits, trace Native parsing/extraction, identity and slot selection, 3MF extraction, normalization, comparison, row generation, and Preview/Submit propagation. Test missing, invalid, ambiguous, unresolved, equal, and unequal operands; add a real-fixture comparison and negative mismatch test whenever committed evidence permits.
+10. Complete `templates/onboarding-report.md` and `templates/compatibility-matrix.md` with `CONFIRMED`, `INFERRED`, or `NOT_VERIFIED` evidence labels.
 
 ## Non-negotiable guardrails
 
@@ -42,6 +43,8 @@ Use bounded ZIP inspection and treat fixtures as untrusted. Do not execute embed
 ## Required declarations
 
 Every onboarding attempt must declare: Native Preset, Validation, Diff (Supported/Unsupported); 3MF Extraction and Consistency (Supported/Partial/Unsupported); Inheritance Resolution (Supported/Preserve Only/Unsupported); Multi-filament and Multi-plate (Supported/Partial/Unsupported); Publication (Verified/Not Verified). Each declaration needs evidence, fixtures, tests, and limitations. Never infer Supported from a parser that merely does not raise.
+
+Consistency diagnostics must keep three layers separate: coverage (`TARGET_NOT_DECLARED`, `MAPPING_NOT_IMPLEMENTED`, `MAPPING_DECLARED`, or `MAPPING_UNKNOWN`), runtime resolution (identity, slot, source-value, and normalization outcomes), and public comparison status. Do not add comparison statuses for internal causes. A missing or unresolved operand must never be emitted as `MATCH`; use existing status semantics and the optional parameter-level diagnostic fields already present in the report contract.
 
 Read the references as needed:
 
@@ -78,3 +81,10 @@ normalization, or end-to-end comparison. In particular, an Important Native
 Diff parameter is not automatically a 3MF comparable parameter. Every report
 must disclose uncovered and uncertain mappings and keep 3MF runtime target
 sets/statuses unchanged unless separately authorized.
+
+For consistency coverage evidence, distinguish `STATIC_TARGET_ONLY`,
+`MAPPING_VERIFIED`, `RESOLUTION_VERIFIED`, `COMPARISON_VERIFIED`,
+`UNVERIFIED`, and `NOT_TARGETED`. These are audit evidence levels, not runtime
+comparison statuses. If a fixture cannot establish identity or slot selection,
+preserve `UNRESOLVED` and document the fixture limitation rather than weakening
+selection requirements.

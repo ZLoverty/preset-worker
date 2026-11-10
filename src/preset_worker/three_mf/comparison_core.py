@@ -116,18 +116,26 @@ def compare_parameter(name: str, preset: dict[str, Any], project: dict[str, Any]
     result: dict[str, Any] = {
         "parameter_id": name, "unit": PARAMETER_UNITS[name],
         "comparison_scope": "STORED_VALUE", "status": "UNRESOLVED", "elements": [],
+        "diagnostic": {
+            "coverage": "MAPPING_DECLARED",
+            "resolution": "PENDING",
+            "stage": "comparison",
+        },
         "preset": {"kind": preset_kind, "original_array": preset_original, "raw_value": raw_preset, "source_path": preset_path, "evidence": raw_preset_evidence},
         "project": {"kind": project_kind, "original_array": project_original, "raw_value": raw_project, "source_path": project_path, "evidence": raw_project_evidence},
         "runtime_effective_status": "NOT_CLAIMED",
     }
     if raw_preset_kind == "MISSING":
         result["status"] = "MISSING_IN_PRESET"
+        result["diagnostic"].update({"resolution": "SOURCE_PARAMETER_MISSING", "missing_side": "preset"})
         return result
     if raw_project_kind == "MISSING":
         result["status"] = "MISSING_IN_3MF"
+        result["diagnostic"].update({"resolution": "SOURCE_PARAMETER_MISSING", "missing_side": "3mf"})
         return result
     if preset_kind != project_kind:
         result["status"] = "NOT_COMPARABLE"
+        result["diagnostic"].update({"resolution": "SHAPE_NOT_COMPARABLE"})
         count = max(len(preset_value) if preset_kind == "ARRAY" else 1, len(project_value) if project_kind == "ARRAY" else 1)
         result["elements"] = [{
             "path": f"{name}[{i}]" if (preset_kind == "ARRAY" or project_kind == "ARRAY") else name,
@@ -157,12 +165,29 @@ def compare_parameter(name: str, preset: dict[str, Any], project: dict[str, Any]
             result["status"] = "UNRESOLVED"
         else:
             result["status"] = "MATCH"
+        element_statuses = {item["status"] for item in result["elements"]}
+        result["diagnostic"]["resolution"] = (
+            "SOURCE_PARAMETER_MISSING"
+            if element_statuses & {"MISSING_IN_PRESET", "MISSING_IN_3MF"}
+            else "SOURCE_PARAMETER_INVALID"
+            if "UNRESOLVED" in element_statuses
+            else "RESOLVED"
+        )
         return result
     result["comparison_scope"] = "STORED_SCALAR"
     item = _element(name, 0, preset_value, project_value, preset_path, project_path)
     item["path"] = name
     result["elements"] = [item]
     result["status"] = item["status"]
+    result["diagnostic"]["resolution"] = {
+        "MATCH": "RESOLVED",
+        "MISMATCH": "RESOLVED",
+        "MISSING_IN_PRESET": "SOURCE_PARAMETER_MISSING",
+        "MISSING_IN_3MF": "SOURCE_PARAMETER_MISSING",
+        "UNRESOLVED": "SOURCE_PARAMETER_INVALID",
+    }.get(item["status"], "UNRESOLVED")
+    if item["status"] in {"MISSING_IN_PRESET", "MISSING_IN_3MF"}:
+        result["diagnostic"]["missing_side"] = "preset" if item["status"] == "MISSING_IN_PRESET" else "3mf"
     return result
 
 

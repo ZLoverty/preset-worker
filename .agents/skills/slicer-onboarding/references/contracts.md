@@ -44,3 +44,11 @@ Interpret `Covered` as target-name membership only, never as proof that a value
 is extracted, resolved, mapped, normalized, and compared. Use `Unknown` when a
 target catalog is unavailable. Report every uncovered important parameter and
 every mapping whose semantic equivalence is not established.
+
+Consistency reports may carry optional `diagnostic` data on a comparison and
+flattened row without changing `schema_version` or the existing status
+vocabulary. Keep `coverage`, `resolution`, and `stage` separate from the
+comparison `status`. Typical resolution evidence includes
+`SOURCE_PARAMETER_MISSING`, `SOURCE_PARAMETER_INVALID`,
+`FILAMENT_IDENTITY_UNRESOLVED`, and `SHAPE_NOT_COMPARABLE`. Do not expose
+secrets or full raw artifacts in these fields.

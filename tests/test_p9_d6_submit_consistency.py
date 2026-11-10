@@ -10,6 +10,7 @@ from preset_worker.slicers.contracts import Artifact
 
 
 ROOT = Path("tests/fixtures/slicers")
+BAMBU_FIXTURE_ROOT = ROOT / "bambu_studio"
 
 
 class SubmitClient:
@@ -79,8 +80,11 @@ def candidate(source, filename="preset.json"):
 
 def fixture_pair(slicer):
     if slicer == "BambuStudio":
-        base = Path("downloads/3mf-fixture")
-        return (base / "PPS100CF10 H2D (1).json").read_bytes(), (base / "PPS100CF10 H2D (1).3mf").read_bytes(), "PPS100CF10 H2D (1).json"
+        return (
+            (BAMBU_FIXTURE_ROOT / "PETG-CF A2L.json").read_bytes(),
+            (BAMBU_FIXTURE_ROOT / "PETG-CF A2L.3mf").read_bytes(),
+            "PETG-CF A2L.json",
+        )
     directories = {
         "CrealityPrint": ("creality_print", "creality.3mf"),
         "ElegooSlicer": ("elegoo_slicer", "elegoo.3mf"),

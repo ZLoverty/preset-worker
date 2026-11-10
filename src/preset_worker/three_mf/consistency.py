@@ -332,6 +332,7 @@ def validate_bambu_consistency(
                 "project_value": comparison["project"].get("raw_value"),
                 "preset_source_path": comparison["preset"].get("source_path"),
                 "project_source_path": comparison["project"].get("source_path"),
+                "diagnostic": comparison.get("diagnostic", {}),
             })
         else:
             for element in elements:
@@ -347,6 +348,7 @@ def validate_bambu_consistency(
                     "preset_source_path": element.get("preset_source_path"),
                     "project_source_path": element.get("project_source_path"),
                     "evidence": element.get("evidence", []),
+                    "diagnostic": comparison.get("diagnostic", {}),
                 })
     counts: dict[str, int] = {}
     for item in report["comparisons"]:

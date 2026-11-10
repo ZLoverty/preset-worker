@@ -13,6 +13,7 @@ from preset_worker.slicers.contracts import Artifact
 
 
 ROOT = Path("tests/fixtures/slicers")
+BAMBU_FIXTURE_ROOT = ROOT / "bambu_studio"
 
 
 class ConsistencyClient:
@@ -76,9 +77,8 @@ class P9D6PreviewTests(unittest.TestCase):
         ]
         for slicer, directory, project_name, expected_source in cases:
             if slicer == "BambuStudio":
-                base = Path("downloads/3mf-fixture")
-                preset = base / "PPS100CF10 H2D (1).json"
-                project = base / "PPS100CF10 H2D (1).3mf"
+                preset = BAMBU_FIXTURE_ROOT / "PETG-CF A2L.json"
+                project = BAMBU_FIXTURE_ROOT / "PETG-CF A2L.3mf"
             else:
                 base = ROOT / directory
                 preset = next(path for path in base.iterdir() if path.suffix in (".json", ".ini") and path.name != "manifest.json")
@@ -93,8 +93,11 @@ class P9D6PreviewTests(unittest.TestCase):
             self.assertEqual(client.downloads, ["project"], slicer)
 
     def test_unknown_slicer_does_not_fall_back_to_bambu(self):
-        base = Path("downloads/3mf-fixture")
-        client = ConsistencyClient("UnknownSlicer", base / "PPS100CF10 H2D (1).json", base / "PPS100CF10 H2D (1).3mf")
+        client = ConsistencyClient(
+            "UnknownSlicer",
+            BAMBU_FIXTURE_ROOT / "PETG-CF A2L.json",
+            BAMBU_FIXTURE_ROOT / "PETG-CF A2L.3mf",
+        )
         source = Artifact(client.files["preset"], "preset.json", "application/json")
         self.assertEqual(build_consistency_report(client, client.record, SimpleNamespace(source_artifact=source)), "")
         self.assertEqual(client.downloads, [])

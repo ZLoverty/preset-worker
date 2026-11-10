@@ -40,6 +40,7 @@ def _rows(comparisons: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "project_value": comparison["project"].get("raw_value"),
                 "preset_source_path": comparison["preset"].get("source_path"),
                 "project_source_path": comparison["project"].get("source_path"),
+                "diagnostic": comparison.get("diagnostic", {}),
             })
             continue
         for element in elements:
@@ -55,6 +56,7 @@ def _rows(comparisons: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "preset_source_path": element.get("preset_source_path"),
                 "project_source_path": element.get("project_source_path"),
                 "evidence": element.get("evidence", []),
+                "diagnostic": comparison.get("diagnostic", {}),
             })
     return rows
 
@@ -163,6 +165,11 @@ def validate_native_consistency(
             # explicitly non-comparable until identity is resolved.
             comparison["status"] = "UNRESOLVED"
             comparison["identity_resolution"] = selection["status"]
+            comparison.setdefault("diagnostic", {}).update({
+                "resolution": "FILAMENT_IDENTITY_UNRESOLVED",
+                "stage": "selection",
+                "reason": selection.get("reason", "filament identity did not resolve"),
+            })
             for element in comparison.get("elements", []):
                 element["status"] = "UNRESOLVED"
                 element.setdefault("evidence", []).append("filament identity did not resolve to a project slot")

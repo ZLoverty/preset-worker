@@ -33,6 +33,8 @@ Do not claim full completion while a mandatory check is missing.
 - [ ] Exact values, source paths, normalization and report schema asserted.
 - [ ] Extracted-but-uncompared parameters detected and disclosed.
 - [ ] Static catalog/consistency coverage inventory reviewed; `Covered`, `Not covered`, and `Unknown` are interpreted as audit evidence rather than proof of 3MF comparability.
+- [ ] Missing, invalid, ambiguous, and unresolved operands cannot become `MATCH`; parameter-level diagnostic evidence distinguishes coverage, resolution, and comparison.
+- [ ] Orca/other identity-selection fixture limitations are reproduced or documented with evidence; valid comparison and negative mismatch fixtures are used when available.
 
 ## Integration and regression
 
