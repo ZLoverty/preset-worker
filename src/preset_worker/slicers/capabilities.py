@@ -16,6 +16,7 @@ _VALID_CAPABILITIES = frozenset({SUPPORTED, UNSUPPORTED})
 # A new processor must intentionally choose whether consistency is supported.
 DEFAULT_CONSISTENCY_CAPABILITIES: dict[str, str] = {
     "BambuStudio": SUPPORTED,
+    "FlashStudio": SUPPORTED,
     "OrcaSlicer": SUPPORTED,
     "CrealityPrint": SUPPORTED,
     "ElegooSlicer": SUPPORTED,

@@ -3,6 +3,7 @@
 from .bambu_studio import BambuStudioProcessor
 from .creality_print import CrealityPrintProcessor
 from .elegoo_slicer import ElegooSlicerProcessor
+from .flash_studio import FlashStudioProcessor
 from .orca_slicer import OrcaSlicerProcessor
 from .prusa_slicer import PrusaSlicerProcessor
 from .snapmaker_orca import SnapmakerOrcaSlicerProcessor
@@ -47,6 +48,7 @@ __all__ = [
     "BambuStudioProcessor",
     "CrealityPrintProcessor",
     "ElegooSlicerProcessor",
+    "FlashStudioProcessor",
     "OrcaSlicerProcessor",
     "PrusaSlicerProcessor",
     "SnapmakerOrcaSlicerProcessor",

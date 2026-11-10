@@ -8,6 +8,7 @@ from .bambu_studio import BambuStudioProcessor
 from .contracts import SLICER_ID_ALIASES, SlicerProcessorRegistry, canonical_slicer_id
 from .creality_print import CrealityPrintProcessor
 from .elegoo_slicer import ElegooSlicerProcessor
+from .flash_studio import FlashStudioProcessor
 from .orca_slicer import OrcaSlicerProcessor
 from .prusa_slicer import PrusaSlicerProcessor
 from .snapmaker_orca import SnapmakerOrcaSlicerProcessor
@@ -24,4 +25,5 @@ def default_processor_registry() -> SlicerProcessorRegistry:
         ElegooSlicerProcessor(),
         PrusaSlicerProcessor(),
         SnapmakerOrcaSlicerProcessor(),
+        FlashStudioProcessor(),
     ])

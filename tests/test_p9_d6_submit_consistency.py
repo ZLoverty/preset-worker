@@ -91,6 +91,7 @@ def fixture_pair(slicer):
         "OrcaSlicer": ("orca_slicer", "orca.3mf"),
         "SnapmakerOrcaSlicer": ("orca_slicer_snapmaker", "snapmaker-orca.3mf"),
         "PrusaSlicer": ("prusa_slicer", "prusa.3mf"),
+        "FlashStudio": ("flash_studio", "pla ff creator 5.3mf"),
     }
     directory, project_name = directories[slicer]
     base = ROOT / directory
@@ -108,7 +109,7 @@ class P9D6SubmitConsistencyTests(unittest.TestCase):
         return client, result
 
     def test_submit_without_preview_writes_ready_for_all_six_slicers(self):
-        for slicer in ("BambuStudio", "CrealityPrint", "ElegooSlicer", "OrcaSlicer", "SnapmakerOrcaSlicer", "PrusaSlicer"):
+        for slicer in ("BambuStudio", "CrealityPrint", "ElegooSlicer", "OrcaSlicer", "SnapmakerOrcaSlicer", "PrusaSlicer", "FlashStudio"):
             client, result = self.run_submit(slicer)
             payload = json.loads(client.updates[-1]["consistency_report"])
             self.assertEqual(result.status, "READY_FOR_REVIEW", slicer)

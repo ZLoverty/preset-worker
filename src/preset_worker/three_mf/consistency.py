@@ -8,6 +8,7 @@ from typing import Any
 from ..slicers.bambu_studio import BambuStudioProcessor
 from ..slicers.creality_print import CrealityPrintProcessor
 from ..slicers.elegoo_slicer import ElegooSlicerProcessor
+from ..slicers.flash_studio import FlashStudioProcessor
 from ..slicers.orca_slicer import OrcaSlicerProcessor
 from ..slicers.snapmaker_orca import SnapmakerOrcaSlicerProcessor
 from ..slicers.contracts import Artifact, ProcessingContext, ValidationStatus
@@ -396,6 +397,18 @@ def validate_orca_consistency(
     """Run isolated OrcaSlicer consistency validation."""
     return validate_native_consistency(
         OrcaSlicerProcessor(), preset_artifact, project_artifact, context=context,
+    )
+
+
+def validate_flash_studio_consistency(
+    preset_artifact: Artifact,
+    project_artifact: Artifact,
+    *,
+    context: ProcessingContext | None = None,
+) -> dict[str, Any]:
+    """Run isolated Flash Studio consistency validation."""
+    return validate_native_consistency(
+        FlashStudioProcessor(), preset_artifact, project_artifact, context=context,
     )
 
 

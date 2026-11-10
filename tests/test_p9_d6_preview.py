@@ -74,6 +74,7 @@ class P9D6PreviewTests(unittest.TestCase):
             ("OrcaSlicer", "orca_slicer", "orca.3mf", "OrcaSlicer"),
             ("SnapmakerOrcaSlicer", "orca_slicer_snapmaker", "snapmaker-orca.3mf", "SnapmakerOrcaSlicer"),
             ("PrusaSlicer", "prusa_slicer", "prusa.3mf", "PrusaSlicer"),
+            ("FlashStudio", "flash_studio", "pla ff creator 5.3mf", "FlashStudio"),
         ]
         for slicer, directory, project_name, expected_source in cases:
             if slicer == "BambuStudio":
