@@ -16,6 +16,11 @@ from .contracts import (
     ValidationResult,
     ValidationStatus,
 )
+from .parameter_catalog import (
+    classify_native_path,
+    important_paths_for_slicer,
+    system_metadata_paths_for_slicer,
+)
 
 
 def parse_json_artifact(artifact: bytes) -> Any:
@@ -39,43 +44,12 @@ def _flatten(value: Any, path: str = "") -> dict[str, Any]:
     return {path: value}
 
 
-IMPORTANT_PARAMETER_PATHS = frozenset({
-    # Metadata/project_settings.config contains all eight canonical
-    # cross-slicer material parameters, even when a preset inherits them.
-    "filament_flow_ratio",
-    "filament_max_volumetric_speed",
-    "fan_min_speed",
-    "fan_max_speed",
-    "fan_cooling_layer_time",
-    "slow_down_layer_time",
-    "nozzle_temperature",
-    "nozzle_temperature_initial_layer",
-    "filament_retraction_length",
-    "retraction_length",
-    "chamber_temperatures",
-    "textured_plate_temp",
-})
-
-SYSTEM_METADATA_PATHS = frozenset({
-    "from",
-    "name",
-    "version",
-    "inherits",
-    "pm_method_version",
-    "filament_settings_id",
-    "printer_settings_id",
-    "print_settings_id",
-    "process_settings_id",
-})
+IMPORTANT_PARAMETER_PATHS = important_paths_for_slicer("BambuStudio")
+SYSTEM_METADATA_PATHS = system_metadata_paths_for_slicer("BambuStudio")
 
 
 def _category(path: str) -> DiffCategory:
-    field = path.split("[", 1)[0]
-    if field in IMPORTANT_PARAMETER_PATHS:
-        return DiffCategory.IMPORTANT_PARAMETER
-    if field in SYSTEM_METADATA_PATHS:
-        return DiffCategory.SYSTEM_METADATA
-    return DiffCategory.OTHER_PARAMETER
+    return classify_native_path("BambuStudio", path)
 
 
 def _calculate_diff(old: Any | None, new: Any) -> UnifiedDiff:

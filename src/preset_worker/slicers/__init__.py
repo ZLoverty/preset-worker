@@ -32,6 +32,15 @@ from .capabilities import (
     RegistrationIssue,
     check_registration_completeness,
 )
+from .parameter_catalog import (
+    IMPORTANT_PARAMETER_CATALOG,
+    ParameterDefinition,
+    build_coverage_inventory,
+    classify_native_path,
+    important_paths_for_slicer,
+    system_metadata_paths_for_slicer,
+    validate_catalog,
+)
 from .registry import default_processor_registry
 
 __all__ = [
@@ -62,4 +71,11 @@ __all__ = [
     "UNSUPPORTED",
     "RegistrationIssue",
     "check_registration_completeness",
+    "IMPORTANT_PARAMETER_CATALOG",
+    "ParameterDefinition",
+    "build_coverage_inventory",
+    "classify_native_path",
+    "important_paths_for_slicer",
+    "system_metadata_paths_for_slicer",
+    "validate_catalog",
 ]

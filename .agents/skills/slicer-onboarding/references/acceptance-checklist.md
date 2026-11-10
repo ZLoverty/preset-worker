@@ -9,7 +9,7 @@ Do not claim full completion while a mandatory check is missing.
 - [ ] Canonical naming and context-authoritative metadata verified.
 - [ ] Deterministic canonical output and Native Diff verified.
 - [ ] Unknown-field preservation behavior documented.
-- [ ] Important-parameter classification tested without changing shared rules.
+- [ ] Important-parameter classification tested through the centralized catalog, including aliases, slicer-specific paths, indexed paths, malformed indexed paths, and metadata precedence, without changing the shared diff contract.
 
 ## Inheritance
 
@@ -32,6 +32,7 @@ Do not claim full completion while a mandatory check is missing.
 - [ ] Matching, mismatch, missing, and unresolved cases tested; ambiguous cases tested when relevant.
 - [ ] Exact values, source paths, normalization and report schema asserted.
 - [ ] Extracted-but-uncompared parameters detected and disclosed.
+- [ ] Static catalog/consistency coverage inventory reviewed; `Covered`, `Not covered`, and `Unknown` are interpreted as audit evidence rather than proof of 3MF comparability.
 
 ## Integration and regression
 

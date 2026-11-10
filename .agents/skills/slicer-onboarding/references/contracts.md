@@ -30,3 +30,17 @@ The Feishu consistency envelope is built by `services/consistency_preview.py` an
 ## Parameter coverage
 
 Check all current catalogs rather than copying one: processor-local important sets, `three_mf/comparison_core.py:PARAMETER_UNITS`, `three_mf/consistency.py:REQUIRED_PARAMETERS`, and Prusa-specific targets/mappings. For every important native parameter record native source, 3MF source, selection rule, comparison support, and evidence. Extracted-but-unresolved may be legitimate, a coverage gap, or a defect; test the full path before deciding.
+
+For Native Preset Diff, the processor-local sets are derived from
+`slicers/parameter_catalog.py`. The catalog's aliases and slicer-specific paths
+are authoritative for classification, including numeric indexed paths. Keep
+metadata classification ahead of Important Parameter classification. The
+catalog's optional consistency target names are only an audit cross-reference;
+they must not expand or alter 3MF extraction, comparison, statuses, or target
+sets.
+
+The static coverage inventory reports `Covered`, `Not covered`, or `Unknown`.
+Interpret `Covered` as target-name membership only, never as proof that a value
+is extracted, resolved, mapped, normalized, and compared. Use `Unknown` when a
+target catalog is unavailable. Report every uncovered important parameter and
+every mapping whose semantic equivalence is not established.

@@ -17,6 +17,7 @@ from .contracts import (
     ValidationResult,
     ValidationStatus,
 )
+from .parameter_catalog import classify_native_path, important_paths_for_slicer, system_metadata_paths_for_slicer
 
 
 _ASSIGNMENT = re.compile(r"^(?P<key>[^=\s][^=]*?)\s*=\s(?P<value>.*)$")
@@ -57,36 +58,16 @@ def _serialize_document(document: PrusaDocument) -> bytes:
     return text.encode("utf-8")
 
 
-IMPORTANT_PARAMETER_KEYS = frozenset({
-    "bed_temperature",
-    "fan_below_layer_time",
-    "slowdown_below_layer_time",
-    "extrusion_multiplier",
-    "filament_max_volumetric_speed",
-    "filament_retract_length",
-    "max_fan_speed",
-    "min_fan_speed",
-    "first_layer_temperature",
-    "temperature",
-})
-
-SYSTEM_METADATA_KEYS = frozenset({
-    "compatible_printers",
-    "compatible_printers_condition",
-    "compatible_prints",
-    "compatible_prints_condition",
-    "filament_settings_id",
-    "inherits",
-    "pm_method_version",
-})
+IMPORTANT_PARAMETER_KEYS = frozenset(
+    path.removeprefix("ini.") for path in important_paths_for_slicer("PrusaSlicer")
+)
+SYSTEM_METADATA_KEYS = frozenset(
+    path.removeprefix("ini.") for path in system_metadata_paths_for_slicer("PrusaSlicer")
+)
 
 
 def _category(key: str) -> DiffCategory:
-    if key in IMPORTANT_PARAMETER_KEYS:
-        return DiffCategory.IMPORTANT_PARAMETER
-    if key in SYSTEM_METADATA_KEYS:
-        return DiffCategory.SYSTEM_METADATA
-    return DiffCategory.OTHER_PARAMETER
+    return classify_native_path("PrusaSlicer", f"ini.{key}")
 
 
 def _change(old: dict[str, str], new: dict[str, str], key: str) -> DiffChange | None:

@@ -8,40 +8,11 @@ from typing import Any
 
 from ..diff import ChangeType, DiffCategory, DiffChange, UnifiedDiff
 from .contracts import Artifact, InvalidArtifactError, ProcessedArtifact, ProcessingContext, ValidationResult, ValidationStatus
+from .parameter_catalog import classify_native_path, important_paths_for_slicer, system_metadata_paths_for_slicer
 
 
-IMPORTANT_PARAMETER_PATHS = frozenset({
-    "filament_flow_ratio",
-    "filament_max_volumetric_speed",
-    "fan_min_speed",
-    "fan_max_speed",
-    "fan_cooling_layer_time",
-    "slow_down_layer_time",
-    "nozzle_temperature",
-    "nozzle_temperature_initial_layer",
-    "pressure_advance",
-    "filament_retraction_length",
-    "retraction_length",
-    "chamber_temperature",
-    "textured_plate_temp",
-})
-
-SYSTEM_METADATA_PATHS = frozenset({
-    "type",
-    "name",
-    "from",
-    "instantiation",
-    "inherits",
-    "setting_id",
-    "filament_id",
-    "filament_settings_id",
-    "compatible_printers",
-    "is_custom_defined",
-    "printer_settings_id",
-    "print_settings_id",
-    "version",
-    "pm_method_version",
-})
+IMPORTANT_PARAMETER_PATHS = important_paths_for_slicer("OrcaSlicer")
+SYSTEM_METADATA_PATHS = system_metadata_paths_for_slicer("OrcaSlicer")
 
 
 def parse_json(artifact: Artifact) -> Any:
@@ -71,10 +42,10 @@ def category(
     system_metadata_paths: frozenset[str] = SYSTEM_METADATA_PATHS,
 ) -> DiffCategory:
     field = path.split("[", 1)[0]
-    if field in important_parameter_paths:
-        return DiffCategory.IMPORTANT_PARAMETER
     if field in system_metadata_paths:
         return DiffCategory.SYSTEM_METADATA
+    if field in important_parameter_paths:
+        return DiffCategory.IMPORTANT_PARAMETER
     return DiffCategory.OTHER_PARAMETER
 
 

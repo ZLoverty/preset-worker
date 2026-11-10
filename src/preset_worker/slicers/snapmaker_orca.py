@@ -7,19 +7,13 @@ from typing import Any
 from ..diff import UnifiedDiff
 from .contracts import Artifact, ProcessedArtifact, ProcessingContext, ValidationResult
 from .orca_compatible_core import (
-    IMPORTANT_PARAMETER_PATHS,
-    SYSTEM_METADATA_PATHS,
     OrcaCompatibleCore,
 )
+from .parameter_catalog import important_paths_for_slicer, system_metadata_paths_for_slicer
 
 
-SNAPMAKER_IMPORTANT_PARAMETER_PATHS = frozenset({
-    *IMPORTANT_PARAMETER_PATHS,
-    "graphic_effect_plate_temp",
-    "graphic_effect_plate_temp_initial_layer",
-    "textured_cool_plate_temp",
-    "textured_cool_plate_temp_initial_layer",
-})
+SNAPMAKER_IMPORTANT_PARAMETER_PATHS = important_paths_for_slicer("SnapmakerOrcaSlicer")
+SYSTEM_METADATA_PATHS = system_metadata_paths_for_slicer("SnapmakerOrcaSlicer")
 
 
 class SnapmakerOrcaSlicerProcessor:

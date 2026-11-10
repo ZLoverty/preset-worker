@@ -13,6 +13,7 @@ from .orca_compatible_core import (
     SYSTEM_METADATA_PATHS,
     OrcaCompatibleCore,
 )
+from .parameter_catalog import classify_native_path
 
 
 def _parse_json(artifact: Artifact) -> Any:
@@ -44,12 +45,7 @@ def _flatten(value: Any, path: str = "") -> dict[str, Any]:
 
 
 def _category(path: str) -> DiffCategory:
-    field = path.split("[", 1)[0]
-    if field in IMPORTANT_PARAMETER_PATHS:
-        return DiffCategory.IMPORTANT_PARAMETER
-    if field in SYSTEM_METADATA_PATHS:
-        return DiffCategory.SYSTEM_METADATA
-    return DiffCategory.OTHER_PARAMETER
+    return classify_native_path("OrcaSlicer", path)
 
 
 def _diff_values(base: Any, candidate: Any) -> UnifiedDiff:

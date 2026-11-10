@@ -28,8 +28,9 @@ Always complete discovery and semantic verification before implementation. A blo
 3. Characterize supplied files without modifying originals: format, encoding, ZIP entries, keys, identities, inheritance, arrays, slots, plates, objects, and version metadata.
 4. Identify reusable format-family components and build a capability-gap assessment.
 5. Propose native and 3MF mappings with source paths and evidence; ask only unresolved semantic questions.
-6. In IMPLEMENTATION, change only the missing processor/adapter, capability registration, fixtures, and targeted tests. Do not refactor shared catalogs or runtime behavior.
-7. In VERIFICATION, run `python -m unittest tests.test_registration_completeness tests.test_p9_b3_a` (with `PYTHONPATH=src` when needed), then registration checks, parameter coverage checks, cross-slicer regressions, Preview/Submit integration, and publication only when claimed.
+6. In IMPLEMENTATION, change only the missing processor/adapter, capability registration, fixtures, and targeted tests. Shared Native Diff catalogs may be changed only when the task explicitly requires catalog consolidation; preserve the diff contract and do not change 3MF runtime behavior as a side effect.
+7. For Native Diff classification, use `src/preset_worker/slicers/parameter_catalog.py` as the canonical Important Parameter Catalog. Add aliases and slicer-specific native paths there, keep system metadata precedence explicit, and verify exact/indexed paths. Do not treat catalog membership as proof of 3MF comparability.
+8. In VERIFICATION, run `python -m unittest tests.test_registration_completeness tests.test_p9_b3_a tests.test_parameter_catalog` (with `PYTHONPATH=src` when needed), then registration checks, parameter coverage checks, cross-slicer regressions, Preview/Submit integration, and publication only when claimed.
 8. Complete `templates/onboarding-report.md` and `templates/compatibility-matrix.md` with `CONFIRMED`, `INFERRED`, or `NOT_VERIFIED` evidence labels.
 
 ## Non-negotiable guardrails
@@ -50,3 +51,30 @@ Read the references as needed:
 - [acceptance-checklist.md](references/acceptance-checklist.md) before claiming completion.
 
 Use the templates for reports; do not create a new report schema. Stop before implementation or acceptance when the conditions in the acceptance checklist are unmet.
+
+## Important Parameter Catalog
+
+The catalog is the source of truth for Native Preset Diff `IMPORTANT_PARAMETER`
+classification across BambuStudio, OrcaSlicer, CrealityPrint, ElegooSlicer,
+SnapmakerOrcaSlicer, and PrusaSlicer. Each definition records a canonical
+parameter ID, slicer-specific native paths, optional consistency target names,
+and semantic notes. Processors must derive their local important-path sets from
+this catalog; compatibility-facing processor attributes may remain available.
+
+Use `classify_native_path()` for classification. It supports exact paths and
+numeric array suffixes such as `field[0]`, while malformed or non-numeric
+suffixes remain `OTHER_PARAMETER`. System metadata is checked before important
+parameters. Unknown paths remain `OTHER_PARAMETER`.
+
+Use `build_coverage_inventory()` only as a read-only static inventory. Its
+coverage values mean:
+
+- `Covered`: the catalog definition names a supplied consistency target;
+- `Not covered`: no supplied target is named;
+- `Unknown`: no consistency target catalog was supplied.
+
+These labels do not prove extraction, identity/slot resolution, mapping,
+normalization, or end-to-end comparison. In particular, an Important Native
+Diff parameter is not automatically a 3MF comparable parameter. Every report
+must disclose uncovered and uncertain mappings and keep 3MF runtime target
+sets/statuses unchanged unless separately authorized.

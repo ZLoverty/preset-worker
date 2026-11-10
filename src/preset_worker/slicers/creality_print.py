@@ -21,6 +21,7 @@ from .contracts import (
     ValidationResult,
     ValidationStatus,
 )
+from .parameter_catalog import classify_native_path, important_paths_for_slicer, system_metadata_paths_for_slicer
 
 
 def _parse_json(artifact: Artifact) -> Any:
@@ -44,44 +45,12 @@ def _flatten(value: Any, path: str = "") -> dict[str, Any]:
     return {path: value}
 
 
-IMPORTANT_PARAMETER_PATHS = frozenset({
-    "filament_flow_ratio",
-    "filament_max_volumetric_speed",
-    "fan_min_speed",
-    "fan_max_speed",
-    "fan_cooling_layer_time",
-    "slow_down_layer_time",
-    "slow_down_for_layer_cooling",
-    "nozzle_temperature",
-    "nozzle_temperature_initial_layer",
-    "pressure_advance",
-    "filament_retraction_length",
-    "retraction_length",
-    "chamber_temperature",
-    "textured_plate_temp",
-})
-
-SYSTEM_METADATA_PATHS = frozenset({
-    "base_id",
-    "filament_settings_id",
-    "from",
-    "inherits",
-    "is_custom_defined",
-    "name",
-    "pm_method_version",
-    "printer_settings_id",
-    "print_settings_id",
-    "version",
-})
+IMPORTANT_PARAMETER_PATHS = important_paths_for_slicer("CrealityPrint")
+SYSTEM_METADATA_PATHS = system_metadata_paths_for_slicer("CrealityPrint")
 
 
 def _category(path: str) -> DiffCategory:
-    field = path.split("[", 1)[0]
-    if field in IMPORTANT_PARAMETER_PATHS:
-        return DiffCategory.IMPORTANT_PARAMETER
-    if field in SYSTEM_METADATA_PATHS:
-        return DiffCategory.SYSTEM_METADATA
-    return DiffCategory.OTHER_PARAMETER
+    return classify_native_path("CrealityPrint", path)
 
 
 def _calculate_diff(old: Any | None, new: Any) -> UnifiedDiff:
