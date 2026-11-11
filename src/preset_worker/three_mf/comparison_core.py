@@ -121,8 +121,22 @@ def compare_parameter(name: str, preset: dict[str, Any], project: dict[str, Any]
             "resolution": "PENDING",
             "stage": "comparison",
         },
-        "preset": {"kind": preset_kind, "original_array": preset_original, "raw_value": raw_preset, "source_path": preset_path, "evidence": raw_preset_evidence},
-        "project": {"kind": project_kind, "original_array": project_original, "raw_value": raw_project, "source_path": project_path, "evidence": raw_project_evidence},
+        "preset": {
+            "kind": preset_kind,
+            "original_array": preset_original,
+            "raw_value": raw_preset,
+            "selected_value": preset_value,
+            "source_path": preset_path,
+            "evidence": raw_preset_evidence,
+        },
+        "project": {
+            "kind": project_kind,
+            "original_array": project_original,
+            "raw_value": raw_project,
+            "selected_value": project_value,
+            "source_path": project_path,
+            "evidence": raw_project_evidence,
+        },
         "runtime_effective_status": "NOT_CLAIMED",
     }
     if raw_preset_kind == "MISSING":

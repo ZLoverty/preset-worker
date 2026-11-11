@@ -84,6 +84,25 @@ class ComparisonCoreTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "AMBIGUOUS")
 
+    def test_missing_preset_retains_selected_project_operand_and_raw_array(self):
+        result = compare_parameter(
+            "fan_max_speed", {},
+            {"fan_max_speed": ["80", "90", "70", "60"]}, slot_id=1, slot_count=4,
+        )
+        self.assertEqual(result["status"], "MISSING_IN_PRESET")
+        self.assertEqual(result["project"]["selected_value"], "80")
+        self.assertEqual(result["project"]["original_array"], ["80", "90", "70", "60"])
+        self.assertEqual(result["project"]["source_path"], "$.fan_max_speed[0]")
+
+    def test_unresolved_selection_does_not_fabricate_project_scalar(self):
+        result = compare_parameter(
+            "fan_max_speed", {},
+            {"fan_max_speed": ["80", "90", "70", "60"]}, slot_id=None, slot_count=4,
+        )
+        self.assertEqual(result["status"], "MISSING_IN_PRESET")
+        self.assertEqual(result["project"]["selected_value"], ["80", "90", "70", "60"])
+        self.assertEqual(result["project"]["kind"], "ARRAY")
+
     def test_scalar_and_array_are_not_broadcast(self):
         result = compare_parameter(
             "fan_max_speed", {"fan_max_speed": "80"},
