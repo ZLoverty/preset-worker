@@ -705,6 +705,10 @@ class SubmissionEnrichment:
         else:
             preset = self._find_preset(preset_key)
         operation = "UPDATE" if preset else "CREATE"
+        if not preset and (fields.get("base_version_id") or fields.get(BASE_VERSION_NO_TEXT_FIELD)):
+            raise CandidateFailure(
+                "Submission contains a base version but no matching Preset; cannot safely classify UPDATE as CREATE"
+            )
         if preset:
             if timing:
                 with timing.stage("base_version_lookup", summary_key="feishu_read_ms"):

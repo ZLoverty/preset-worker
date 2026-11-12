@@ -210,6 +210,15 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "nonexistent"):
             PreviewService(client).preview_submission("S123")
 
+    def test_update_preview_rejects_missing_current_preset_with_base_reference(self):
+        client = FakeClient({"name": "new", "version": "1"})
+        client.submission["fields"].update({
+            "status": "PREVIEW_REQUESTED",
+            "base_version_id": [{"record_ids": ["version-record-7"]}],
+        })
+        with self.assertRaisesRegex(CandidateFailure, "no matching Preset"):
+            PreviewService(client).preview_submission("S123")
+
     def test_preview_invalid_candidate_returns_to_draft(self):
         client = FakeClient(b"not-json")
         client.submission["fields"]["status"] = "PREVIEW_REQUESTED"

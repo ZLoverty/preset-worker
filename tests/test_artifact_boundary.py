@@ -59,7 +59,6 @@ class FakeClient:
                 "method_version": "1",
                 "preset_key": "PI | Printer | FakeSlicer",
                 "preset data": [{"file_token": "uploaded"}],
-                "base_version_id": [{"record_ids": ["version-record"]}],
             },
         }
         self.presets = [{
@@ -99,6 +98,7 @@ class FakeClient:
 class ArtifactBoundaryTests(unittest.TestCase):
     def test_non_json_base_and_candidate_stay_opaque(self):
         client = FakeClient()
+        client.submission["fields"]["base_version_id"] = [{"record_ids": ["version-record"]}]
         result = SubmissionEnrichment(
             client,
             processor_registry=SlicerProcessorRegistry([NonJsonProcessor()]),
@@ -123,6 +123,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
 
     def test_persistence_uses_processor_artifact_bytes_and_filename(self):
         client = FakeClient()
+        client.submission["fields"]["base_version_id"] = [{"record_ids": ["version-record"]}]
         client.submission["fields"]["status"] = "VALIDATING"
         SubmissionEnrichment(
             client,
