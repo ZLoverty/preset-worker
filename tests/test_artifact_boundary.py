@@ -59,6 +59,7 @@ class FakeClient:
                 "method_version": "1",
                 "preset_key": "PI | Printer | FakeSlicer",
                 "preset data": [{"file_token": "uploaded"}],
+                "base_version_id": [{"record_ids": ["version-record"]}],
             },
         }
         self.presets = [{
@@ -74,6 +75,9 @@ class FakeClient:
 
     def get_submission(self, _submission_id):
         return self.submission
+
+    def get_record(self, table_id, record_id):
+        return next((item for item in self.versions if item.get("record_id") == record_id), {})
 
     def list_records(self, table_id):
         return {
