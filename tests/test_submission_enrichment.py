@@ -2,6 +2,7 @@ import json
 import unittest
 
 from preset_worker.services.enrichment import (
+    CandidateFailure,
     FeishuClient,
     SubmissionEnrichment,
     UnsupportedSlicerError,
@@ -36,16 +37,23 @@ class FakeClient:
         self.updates = []
         self.uploads = []
         self.downloads = []
+        self.list_calls = []
+        self.get_record_calls = []
 
     def get_submission(self, _submission_id):
         return self.submission
 
-    def list_records(self, table_id):
+    def list_records(self, table_id, **kwargs):
+        self.list_calls.append((table_id, kwargs))
         return {
             self.submission_table_id: [self.submission],
             self.preset_table_id: self.presets,
             self.version_table_id: self.versions,
         }[table_id]
+
+    def get_record(self, table_id, record_id):
+        self.get_record_calls.append((table_id, record_id))
+        return next((item for item in self.versions if item.get("record_id") == record_id), {})
 
     def download_attachment(self, attachment):
         self.downloads.append(attachment["file_token"])
@@ -141,6 +149,7 @@ class SubmissionEnrichmentTests(unittest.TestCase):
     def test_preview_update_uses_current_base_without_publication_artifacts(self):
         client = FakeClient({"name": "new", "version": "1", "temperature": "220"})
         client.submission["fields"]["status"] = "PREVIEW_REQUESTED"
+        client.submission["fields"]["base_version_id"] = [{"record_ids": ["version-record-7"]}]
         client.presets = [{
             "fields": {
                 "preset_key": "L2002CF | BBL P2S | BambuStudio",
@@ -160,6 +169,55 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         self.assertEqual(result.diff.changes[0].path, "name")
         self.assertEqual(client.submission["fields"]["status"], "DRAFT")
         self.assertEqual(client.presets[0]["fields"]["current_version_id"][0]["text"], "P42@v7")
+        self.assertEqual(client.get_record_calls, [("version", "version-record-7")])
+        self.assertFalse([call for call in client.list_calls if call[0] == client.version_table_id])
+
+    def test_update_preview_uses_stale_linked_snapshot_not_latest_preset_version(self):
+        client = FakeClient({"name": "new", "version": "1", "temperature": "220"})
+        client.submission["fields"].update({
+            "status": "PREVIEW_REQUESTED",
+            "base_version_id": [{"record_ids": ["version-record-7"]}],
+        })
+        client.presets = [{"fields": {"preset_key": client.submission["fields"]["preset_key"], "current_version_id": [{"text": "P42@v8"}]}}]
+        client.versions = [
+            {"record_id": "version-record-7", "fields": {"version_id": "P42@v7", "version_no": 7, "canonical_json": [{"file_token": "base7"}]}},
+            {"record_id": "version-record-8", "fields": {"version_id": "P42@v8", "version_no": 8, "canonical_json": [{"file_token": "base8"}]}},
+        ]
+        client.files.update({"base7": b'{"name":"old7","version":"1"}', "base8": b'{"name":"old8","version":"1"}'})
+        result = PreviewService(client).preview_submission("S123")
+        self.assertEqual(result.base_version_id, "P42@v7")
+        self.assertIn("old7", client.files["base7"].decode())
+        self.assertEqual(client.get_record_calls, [("version", "version-record-7")])
+
+    def test_update_preview_rejects_missing_base_version_id(self):
+        client = FakeClient({"name": "new", "version": "1"})
+        client.submission["fields"]["status"] = "PREVIEW_REQUESTED"
+        client.presets = [{"fields": {"preset_key": client.submission["fields"]["preset_key"]}}]
+        with self.assertRaisesRegex(CandidateFailure, "base_version_id"):
+            PreviewService(client).preview_submission("S123")
+
+    def test_update_preview_rejects_malformed_base_version_id(self):
+        client = FakeClient({"name": "new", "version": "1"})
+        client.submission["fields"].update({"status": "PREVIEW_REQUESTED", "base_version_id": [{"record_ids": ["v7", "v8"]}]})
+        client.presets = [{"fields": {"preset_key": client.submission["fields"]["preset_key"]}}]
+        with self.assertRaisesRegex(CandidateFailure, "exactly one"):
+            PreviewService(client).preview_submission("S123")
+
+    def test_update_preview_rejects_nonexistent_base_version_record(self):
+        client = FakeClient({"name": "new", "version": "1"})
+        client.submission["fields"].update({"status": "PREVIEW_REQUESTED", "base_version_id": [{"record_ids": ["missing"]}]})
+        client.presets = [{"fields": {"preset_key": client.submission["fields"]["preset_key"]}}]
+        with self.assertRaisesRegex(RuntimeError, "nonexistent"):
+            PreviewService(client).preview_submission("S123")
+
+    def test_update_preview_rejects_missing_current_preset_with_base_reference(self):
+        client = FakeClient({"name": "new", "version": "1"})
+        client.submission["fields"].update({
+            "status": "PREVIEW_REQUESTED",
+            "base_version_id": [{"record_ids": ["version-record-7"]}],
+        })
+        with self.assertRaisesRegex(CandidateFailure, "no matching Preset"):
+            PreviewService(client).preview_submission("S123")
 
     def test_preview_invalid_candidate_returns_to_draft(self):
         client = FakeClient(b"not-json")
@@ -222,6 +280,7 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         client.presets = [{
             "fields": {"preset_key": "L2002CF | BBL P2S | BambuStudio", "current_version_id": [{"text": "P42@v7"}]}
         }]
+        client.submission["fields"]["base_version_id"] = [{"record_ids": ["version-record-7"]}]
         client.versions = [{
             "record_id": "version-record-7",
             "fields": {"version_id": "P42@v7", "version_no": 7, "canonical_json": [{"file_token": "base"}]}
@@ -235,6 +294,7 @@ class SubmissionEnrichmentTests(unittest.TestCase):
 
     def test_formal_enrichment_writes_base_pair_together(self):
         client = FakeClient({"name": "new", "version": "1", "temperature": "220"})
+        client.submission["fields"]["base_version_id"] = [{"record_ids": ["version-record-7"]}]
         client.presets = [{
             "fields": {"preset_key": "L2002CF | BBL P2S | BambuStudio", "current_version_id": [{"text": "P42@v7"}]}
         }]

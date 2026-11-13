@@ -46,6 +46,30 @@ class P9D3AdapterTests(unittest.TestCase):
         self.assertEqual(report["summary"], {"MISSING_IN_PRESET": 5, "MATCH": 3})
         self.assertNotIn("AMBIGUOUS", report["summary"])
 
+    def test_real_snapmaker_rows_use_selected_slot_for_missing_preset_values(self):
+        preset, project = self.pair("orca_slicer_snapmaker", "snapmaker-orca.3mf")
+        report = validate_snapmaker_orca_consistency(preset, project)
+        expected = {
+            "filament_flow_ratio": ("0.98", ["0.98", "0.98", "0.98", "0.98"]),
+            "filament_max_volumetric_speed": ("12", ["12", "12", "12", "12"]),
+            "fan_min_speed": ("100", ["100", "100", "100", "100"]),
+            "fan_max_speed": ("100", ["100", "100", "100", "100"]),
+            "slow_down_layer_time": ("4", ["4", "8", "8", "8"]),
+        }
+        rows = {row["parameter_id"]: row for row in report["comparison_rows"]}
+        for name, (selected, original) in expected.items():
+            row = rows[name]
+            self.assertEqual(row["status"], "MISSING_IN_PRESET")
+            self.assertIsNone(row["preset_value"])
+            self.assertEqual(row["project_value"], selected)
+            self.assertEqual(row["project_original_array"], original)
+            self.assertEqual(row["project_source_path"], f"$.{name}[0]")
+        for name in ("nozzle_temperature", "nozzle_temperature_initial_layer", "fan_cooling_layer_time"):
+            row = rows[name]
+            self.assertEqual(row["status"], "MATCH")
+            self.assertIsInstance(row["project_value"], str)
+            self.assertEqual(row["project_source_path"], f"$.{name}[0]")
+
     def test_identity_mismatch_does_not_compare_equal_values(self):
         preset, project = self.pair("orca_slicer_snapmaker", "snapmaker-orca.3mf")
         source = json.loads(preset.content)

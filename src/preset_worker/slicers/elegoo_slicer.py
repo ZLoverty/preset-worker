@@ -16,6 +16,7 @@ from .contracts import (
     ValidationResult,
     ValidationStatus,
 )
+from .parameter_catalog import classify_native_path, important_paths_for_slicer, system_metadata_paths_for_slicer
 
 
 def _parse_json(artifact: Artifact) -> Any:
@@ -39,37 +40,12 @@ def _flatten(value: Any, path: str = "") -> dict[str, Any]:
     return {path: value}
 
 
-IMPORTANT_PARAMETER_PATHS = frozenset({
-    "nozzle_temperature",
-    "nozzle_temperature_initial_layer",
-    "filament_max_volumetric_speed",
-    "filament_flow_ratio",
-    "chamber_temperatures",
-    "fan_max_speed",
-    "fan_min_speed",
-    "fan_cooling_layer_time",
-    "slow_down_layer_time", 
-    "filament_retraction_length", 
-    "textured_plate_temp", 
-})
-
-SYSTEM_METADATA_PATHS = frozenset({
-    "filament_settings_id",
-    "from",
-    "inherits",
-    "name",
-    "pm_method_version",
-    "version",
-})
+IMPORTANT_PARAMETER_PATHS = important_paths_for_slicer("ElegooSlicer")
+SYSTEM_METADATA_PATHS = system_metadata_paths_for_slicer("ElegooSlicer")
 
 
 def _category(path: str) -> DiffCategory:
-    field = path.split("[", 1)[0]
-    if field in IMPORTANT_PARAMETER_PATHS:
-        return DiffCategory.IMPORTANT_PARAMETER
-    if field in SYSTEM_METADATA_PATHS:
-        return DiffCategory.SYSTEM_METADATA
-    return DiffCategory.OTHER_PARAMETER
+    return classify_native_path("ElegooSlicer", path)
 
 
 def _calculate_diff(old: Any | None, new: Any) -> UnifiedDiff:
@@ -94,6 +70,7 @@ def _calculate_diff(old: Any | None, new: Any) -> UnifiedDiff:
 
 class ElegooSlicerProcessor(SlicerProcessor):
     slicer_id = "ElegooSlicer"
+    important_parameter_paths = IMPORTANT_PARAMETER_PATHS
 
     def parse(self, artifact: Artifact, context: ProcessingContext) -> Any:
         return _parse_json(artifact)

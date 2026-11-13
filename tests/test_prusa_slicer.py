@@ -35,6 +35,7 @@ class WorkflowClient:
         self.presets = []
         self.versions = []
         if with_base:
+            self.submission["fields"]["base_version_id"] = [{"record_ids": ["version-record"]}]
             self.presets = [{
                 "record_id": "preset-record",
                 "fields": {
@@ -53,6 +54,9 @@ class WorkflowClient:
 
     def get_submission(self, _submission_id):
         return self.submission
+
+    def get_record(self, table_id, record_id):
+        return next((item for item in self.versions if item.get("record_id") == record_id), {})
 
     def list_records(self, table_id):
         return {

@@ -10,6 +10,7 @@ from preset_worker.slicers.contracts import Artifact
 
 
 ROOT = Path("tests/fixtures/slicers")
+BAMBU_FIXTURE_ROOT = ROOT / "bambu_studio"
 
 
 class SubmitClient:
@@ -79,14 +80,18 @@ def candidate(source, filename="preset.json"):
 
 def fixture_pair(slicer):
     if slicer == "BambuStudio":
-        base = Path("downloads/3mf-fixture")
-        return (base / "PPS100CF10 H2D (1).json").read_bytes(), (base / "PPS100CF10 H2D (1).3mf").read_bytes(), "PPS100CF10 H2D (1).json"
+        return (
+            (BAMBU_FIXTURE_ROOT / "PETG-CF A2L.json").read_bytes(),
+            (BAMBU_FIXTURE_ROOT / "PETG-CF A2L.3mf").read_bytes(),
+            "PETG-CF A2L.json",
+        )
     directories = {
         "CrealityPrint": ("creality_print", "creality.3mf"),
         "ElegooSlicer": ("elegoo_slicer", "elegoo.3mf"),
         "OrcaSlicer": ("orca_slicer", "orca.3mf"),
         "SnapmakerOrcaSlicer": ("orca_slicer_snapmaker", "snapmaker-orca.3mf"),
         "PrusaSlicer": ("prusa_slicer", "prusa.3mf"),
+        "FlashStudio": ("flash_studio", "pla ff creator 5.3mf"),
     }
     directory, project_name = directories[slicer]
     base = ROOT / directory
@@ -104,7 +109,7 @@ class P9D6SubmitConsistencyTests(unittest.TestCase):
         return client, result
 
     def test_submit_without_preview_writes_ready_for_all_six_slicers(self):
-        for slicer in ("BambuStudio", "CrealityPrint", "ElegooSlicer", "OrcaSlicer", "SnapmakerOrcaSlicer", "PrusaSlicer"):
+        for slicer in ("BambuStudio", "CrealityPrint", "ElegooSlicer", "OrcaSlicer", "SnapmakerOrcaSlicer", "PrusaSlicer", "FlashStudio"):
             client, result = self.run_submit(slicer)
             payload = json.loads(client.updates[-1]["consistency_report"])
             self.assertEqual(result.status, "READY_FOR_REVIEW", slicer)

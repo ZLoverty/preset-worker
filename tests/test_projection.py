@@ -109,9 +109,16 @@ class ProjectionTests(unittest.TestCase):
         self.assertEqual(result["temperature"], [{"file_token": "A"}])
         self.assertEqual(result["flow"], [{"file_token": "B"}])
 
-    def test_merge_photos_rejects_multiple_new_attachments(self):
-        with self.assertRaisesRegex(ValueError, "最多只能提交一个"):
-            merge_photos({}, {"temperature": [{"file_token": "A"}, {"file_token": "B"}]}, ("temperature",))
+    def test_merge_photos_preserves_multiple_new_attachments(self):
+        result = merge_photos(
+            {},
+            {"temperature": [{"file_token": "A"}, {"file_token": "B"}]},
+            ("temperature",),
+        )
+        self.assertEqual(
+            result["temperature"],
+            [{"file_token": "A"}, {"file_token": "B"}],
+        )
 
 
 if __name__ == "__main__":

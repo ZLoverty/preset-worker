@@ -30,7 +30,8 @@ For the configured photo fields it:
 - preserves missing, `None`, and empty attachment values;
 - preserves attachment metadata through the existing
   `FeishuAttachmentAdapter`;
-- rejects more than one submitted attachment for a single-photo field.
+- preserves all submitted attachments for a field; no artificial per-field
+  attachment-count restriction is applied by the Worker.
 
 Create naturally starts from an empty Preset photo state. Update merges against
 the Preset record found by the existing `preset_key` and version rules. Repeat

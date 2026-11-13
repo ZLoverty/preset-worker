@@ -75,6 +75,9 @@ class FakeClient:
     def get_submission(self, _submission_id):
         return self.submission
 
+    def get_record(self, table_id, record_id):
+        return next((item for item in self.versions if item.get("record_id") == record_id), {})
+
     def list_records(self, table_id):
         return {
             self.preset_table_id: self.presets,
@@ -95,6 +98,7 @@ class FakeClient:
 class ArtifactBoundaryTests(unittest.TestCase):
     def test_non_json_base_and_candidate_stay_opaque(self):
         client = FakeClient()
+        client.submission["fields"]["base_version_id"] = [{"record_ids": ["version-record"]}]
         result = SubmissionEnrichment(
             client,
             processor_registry=SlicerProcessorRegistry([NonJsonProcessor()]),
@@ -119,6 +123,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
 
     def test_persistence_uses_processor_artifact_bytes_and_filename(self):
         client = FakeClient()
+        client.submission["fields"]["base_version_id"] = [{"record_ids": ["version-record"]}]
         client.submission["fields"]["status"] = "VALIDATING"
         SubmissionEnrichment(
             client,

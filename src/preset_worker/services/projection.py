@@ -39,14 +39,6 @@ PRESET_3MF_PROJECTION = AttachmentProjection("preset 3mf", "preset 3mf")
 CURRENT_ATTACHMENT_PROJECTIONS = PHOTO_PROJECTIONS + (PRESET_3MF_PROJECTION,)
 
 
-def _effective_attachments(value: object, adapter: FeishuAttachmentAdapter) -> list[dict[str, Any]]:
-    """Normalize one configured single-photo field and reject ambiguity."""
-    attachments = adapter.for_field(value)
-    if len(attachments) > 1:
-        raise ValueError("每个照片字段最多只能提交一个附件")
-    return attachments
-
-
 def merge_photos(
     existing: dict[str, Any],
     submitted: dict[str, Any],
@@ -60,7 +52,7 @@ def merge_photos(
     for field in photo_fields:
         if field not in submitted:
             continue
-        new_photo = _effective_attachments(submitted.get(field), adapter)
+        new_photo = adapter.for_field(submitted.get(field))
         if new_photo:
             merged[field] = new_photo
     return merged

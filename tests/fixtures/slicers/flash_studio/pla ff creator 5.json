@@ -1,0 +1,54 @@
+{
+	"fan_cooling_layer_time": [
+		"30"
+	],
+	"fan_max_speed": [
+		"100"
+	],
+	"fan_min_speed": [
+		"100"
+	],
+	"filament_density": [
+		"1.25"
+	],
+	"filament_extruder_variant": [
+		"Direct Drive Standard"
+	],
+	"filament_flow_ratio": [
+		"1.01"
+	],
+	"filament_max_volumetric_speed": [
+		"12"
+	],
+	"filament_settings_id": [
+		"pla ff creator 5"
+	],
+	"from": "User",
+	"hot_plate_temp": [
+		"60"
+	],
+	"hot_plate_temp_initial_layer": [
+		"60"
+	],
+	"inherits": "Generic PLA @FF C5",
+	"name": "pla ff creator 5",
+	"nozzle_temperature": [
+		"220"
+	],
+	"nozzle_temperature_initial_layer": [
+		"210"
+	],
+	"pressure_advance": [
+		"0.02"
+	],
+	"slow_down_layer_time": [
+		"4"
+	],
+	"textured_plate_temp": [
+		"70"
+	],
+	"textured_plate_temp_initial_layer": [
+		"70"
+	],
+	"version": "2.4.0.10"
+}

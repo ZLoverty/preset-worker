@@ -8,6 +8,7 @@ from typing import Any
 from ..slicers.bambu_studio import BambuStudioProcessor
 from ..slicers.creality_print import CrealityPrintProcessor
 from ..slicers.elegoo_slicer import ElegooSlicerProcessor
+from ..slicers.flash_studio import FlashStudioProcessor
 from ..slicers.orca_slicer import OrcaSlicerProcessor
 from ..slicers.snapmaker_orca import SnapmakerOrcaSlicerProcessor
 from ..slicers.contracts import Artifact, ProcessingContext, ValidationStatus
@@ -292,7 +293,10 @@ def validate_bambu_consistency(
         "original_parameters": {name: preset_original.get(name) for name in REQUIRED_PARAMETERS if name in preset_original},
     }
 
-    snapshot = parse_bambu_3mf(project_artifact)
+    snapshot = parse_bambu_3mf(
+        project_artifact,
+        parameter_names=processor.important_parameter_paths,
+    )
     report["source"]["version"] = snapshot.project_context.slicer_version
     report["project_context"] = snapshot.project_context.as_dict()
     report["project_issues"] = snapshot.issues
@@ -329,6 +333,7 @@ def validate_bambu_consistency(
                 "project_value": comparison["project"].get("raw_value"),
                 "preset_source_path": comparison["preset"].get("source_path"),
                 "project_source_path": comparison["project"].get("source_path"),
+                "diagnostic": comparison.get("diagnostic", {}),
             })
         else:
             for element in elements:
@@ -344,6 +349,7 @@ def validate_bambu_consistency(
                     "preset_source_path": element.get("preset_source_path"),
                     "project_source_path": element.get("project_source_path"),
                     "evidence": element.get("evidence", []),
+                    "diagnostic": comparison.get("diagnostic", {}),
                 })
     counts: dict[str, int] = {}
     for item in report["comparisons"]:
@@ -391,6 +397,18 @@ def validate_orca_consistency(
     """Run isolated OrcaSlicer consistency validation."""
     return validate_native_consistency(
         OrcaSlicerProcessor(), preset_artifact, project_artifact, context=context,
+    )
+
+
+def validate_flash_studio_consistency(
+    preset_artifact: Artifact,
+    project_artifact: Artifact,
+    *,
+    context: ProcessingContext | None = None,
+) -> dict[str, Any]:
+    """Run isolated Flash Studio consistency validation."""
+    return validate_native_consistency(
+        FlashStudioProcessor(), preset_artifact, project_artifact, context=context,
     )
 
 

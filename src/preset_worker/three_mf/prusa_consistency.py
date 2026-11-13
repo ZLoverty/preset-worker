@@ -47,6 +47,12 @@ def _sha256(value: bytes) -> str:
 def _unresolved_mapping(comparison: dict[str, Any], reason: str) -> None:
     comparison["status"] = "UNRESOLVED"
     comparison["mapping_status"] = "UNRESOLVED"
+    comparison.setdefault("diagnostic", {}).update({
+        "coverage": "MAPPING_UNKNOWN",
+        "resolution": "MAPPING_UNKNOWN",
+        "stage": "coverage",
+        "reason": reason,
+    })
     comparison.setdefault("evidence", []).append(reason)
     comparison["preset"].setdefault("evidence", []).append(reason)
     comparison["project"].setdefault("evidence", []).append(reason)
@@ -145,6 +151,11 @@ def validate_prusa_consistency(
         elif selection["status"] != "UNIQUE" and snapshot.settings:
             comparison["status"] = "UNRESOLVED"
             comparison["identity_resolution"] = selection["status"]
+            comparison.setdefault("diagnostic", {}).update({
+                "resolution": "FILAMENT_IDENTITY_UNRESOLVED",
+                "stage": "selection",
+                "reason": selection.get("reason", "filename identity did not resolve"),
+            })
             for element in comparison.get("elements", []):
                 element["status"] = "UNRESOLVED"
                 element.setdefault("evidence", []).append("filename identity did not resolve to a project slot")
@@ -158,6 +169,8 @@ def validate_prusa_consistency(
                 if element.get("project_source_path"):
                     match = re.search(r"(\[\d+\])$", element["project_source_path"])
                     element["project_source_path"] = project_path + (match.group(1) if match else "")
+        if name not in UNVERIFIED_MAPPINGS:
+            comparison.setdefault("diagnostic", {}).setdefault("coverage", "MAPPING_DECLARED")
         comparison["runtime_effective_status"] = "NOT_ESTABLISHED"
         report["comparisons"].append(comparison)
 

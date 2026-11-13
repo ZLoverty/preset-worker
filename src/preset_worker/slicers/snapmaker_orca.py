@@ -6,16 +6,28 @@ from typing import Any
 
 from ..diff import UnifiedDiff
 from .contracts import Artifact, ProcessedArtifact, ProcessingContext, ValidationResult
-from .orca_compatible_core import OrcaCompatibleCore
+from .orca_compatible_core import (
+    OrcaCompatibleCore,
+)
+from .parameter_catalog import important_paths_for_slicer, system_metadata_paths_for_slicer
+
+
+SNAPMAKER_IMPORTANT_PARAMETER_PATHS = important_paths_for_slicer("SnapmakerOrcaSlicer")
+SYSTEM_METADATA_PATHS = system_metadata_paths_for_slicer("SnapmakerOrcaSlicer")
 
 
 class SnapmakerOrcaSlicerProcessor:
     """Distinct business identity over the evidence-backed Orca core."""
 
     slicer_id = "SnapmakerOrcaSlicer"
+    important_parameter_paths = SNAPMAKER_IMPORTANT_PARAMETER_PATHS
 
     def __init__(self) -> None:
-        self._core = OrcaCompatibleCore("SnapmakerOrcaSlicer")
+        self._core = OrcaCompatibleCore(
+            "SnapmakerOrcaSlicer",
+            SNAPMAKER_IMPORTANT_PARAMETER_PATHS,
+            SYSTEM_METADATA_PATHS,
+        )
 
     def parse(self, artifact: Artifact, context: ProcessingContext) -> Any:
         return self._core.parse(artifact, context)

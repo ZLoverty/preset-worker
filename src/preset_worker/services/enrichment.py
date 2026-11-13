@@ -151,7 +151,18 @@ def _api_json(url: str, token: str, *, method: str = "GET", payload: dict | None
     if timing:
         path = url.split("?", 1)[0]
         endpoint = "bitable_record" if "/records" in path else "bitable_app" if "/apps/" in path else "tenant_auth" if "/auth/" in path else "feishu_api"
-        operation = "update_record" if method == "PUT" else "list_records" if path.endswith("/records") else "authenticate" if "/auth/" in path else "api_request"
+        if "/auth/" in path:
+            operation = "authenticate"
+        elif method == "GET" and "/records/" in path:
+            operation = "get_record"
+        elif method == "GET" and path.endswith("/records"):
+            operation = "list_records"
+        elif method == "GET" and path.endswith("/fields"):
+            operation = "list_fields"
+        elif method == "PUT" and "/records/" in path:
+            operation = "update_record"
+        else:
+            operation = "api_request"
         timing.api(operation=operation, method=method, endpoint=endpoint, duration_ms=(time.perf_counter() - started) * 1000, status=status, retry_count=retry_count, succeeded=succeeded, request_bytes=len(request_body or b""), response_bytes=len(response_body))
     if not succeeded:
         raise RuntimeError(
@@ -340,6 +351,14 @@ class FeishuClient:
         return self.list_records(
             self.preset_table_id,
             filter_expression=f'CurrentValue.[preset_key]="{escaped}"',
+        )
+
+    def find_version_by_id(self, version_id: str) -> list[dict[str, Any]]:
+        """Find a PresetVersion by its exact business identifier."""
+        escaped = version_id.replace(chr(34), chr(92) + chr(34))
+        return self.list_records(
+            self.version_table_id,
+            filter_expression=f'CurrentValue.[version_id]="{escaped}"',
         )
 
     def create_record(self, table_id: str, fields: dict[str, Any]) -> dict[str, Any]:
@@ -531,7 +550,61 @@ class SubmissionEnrichment:
             raise CandidateFailure(f"preset_key 存在重复 Preset: {preset_key}")
         return matches[0] if matches else None
 
-    def _base_artifact(self, preset: dict[str, Any]) -> tuple[str, str | None, str, Artifact]:
+    def _base_artifact(self, base_reference: object) -> tuple[str, str | None, str, Artifact]:
+        """Load the exact historical version referenced by Submission.base_version_id."""
+        linked_ids = _link_record_ids(base_reference)
+        if len(linked_ids) > 1:
+            raise CandidateFailure("Submission.base_version_id must contain exactly one PresetVersion record")
+        if linked_ids:
+            record_id = linked_ids[0]
+            try:
+                version = self.client.get_record(self.client.version_table_id, record_id)
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    f"Unable to retrieve PresetVersion referenced by base_version_id {record_id}: {exc}"
+                ) from exc
+            if not version:
+                raise RuntimeError(f"Submission.base_version_id references nonexistent PresetVersion record: {record_id}")
+            returned_id = version.get("record_id") or version.get("id")
+            if returned_id and returned_id != record_id:
+                raise RuntimeError(f"Submission.base_version_id resolved to a different PresetVersion record: {record_id}")
+        else:
+            base_version_id = _lookup_text(base_reference)
+            if not base_version_id:
+                raise CandidateFailure("UPDATE Submission is missing base_version_id; provide the linked PresetVersion record")
+            find_version = getattr(self.client, "find_version_by_id", None)
+            if callable(find_version):
+                matches = list(find_version(base_version_id))
+            else:
+                escaped = base_version_id.replace(chr(34), chr(92) + chr(34))
+                matches = list(self.client.list_records(
+                    self.client.version_table_id,
+                    filter_expression=f'CurrentValue.[version_id]="{escaped}"',
+                ))
+            if len(matches) > 1:
+                raise RuntimeError(f"Multiple PresetVersion records match base_version_id: {base_version_id}")
+            if not matches:
+                raise RuntimeError(f"No PresetVersion exists for base_version_id: {base_version_id}")
+            version = matches[0]
+        fields = version.get("fields", {})
+        base_version_id = _lookup_text(fields.get("version_id"))
+        if not base_version_id:
+            raise RuntimeError("Referenced PresetVersion is missing version_id")
+        base_version_no_text = _version_no(version)
+        attachments = _attachment_list(fields.get("canonical_json"))
+        if not attachments:
+            raise RuntimeError(f"base version has no canonical_json: {base_version_id}")
+        attachment = attachments[0]
+        content = _timed_download(self.client, attachment, "base_attachment_download")
+        filename = str(attachment.get("name") or attachment.get("file_name") or f"{base_version_id}.artifact")
+        media_type = attachment.get("type") or attachment.get("mime_type")
+        return base_version_id, version.get("record_id") or version.get("id"), base_version_no_text, Artifact(
+            content=content,
+            filename=filename,
+            media_type=media_type,
+        )
+
+    def _base_artifact_from_preset_legacy(self, preset: dict[str, Any]) -> tuple[str, str | None, str, Artifact]:
         preset_fields = preset.get("fields", {})
         base_version_id = _lookup_text(preset_fields.get("current_version_id"))
         if not base_version_id:
@@ -632,9 +705,22 @@ class SubmissionEnrichment:
         else:
             preset = self._find_preset(preset_key)
         operation = "UPDATE" if preset else "CREATE"
-        base_version_id, base_version_record_id, base_version_no_text, base_artifact = (
-            self._base_artifact(preset) if preset else ("", None, "", None)
-        )
+        if not preset and (fields.get("base_version_id") or fields.get(BASE_VERSION_NO_TEXT_FIELD)):
+            raise CandidateFailure(
+                "Submission contains a base version but no matching Preset; cannot safely classify UPDATE as CREATE"
+            )
+        if preset:
+            if timing:
+                with timing.stage("base_version_lookup", summary_key="feishu_read_ms"):
+                    base_version_id, base_version_record_id, base_version_no_text, base_artifact = (
+                        self._base_artifact(fields.get("base_version_id"))
+                    )
+            else:
+                base_version_id, base_version_record_id, base_version_no_text, base_artifact = (
+                    self._base_artifact(fields.get("base_version_id"))
+                )
+        else:
+            base_version_id, base_version_record_id, base_version_no_text, base_artifact = ("", None, "", None)
         return CandidateResult(
             operation=operation,
             preset_key=preset_key,
