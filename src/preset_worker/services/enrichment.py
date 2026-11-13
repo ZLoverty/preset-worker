@@ -482,6 +482,11 @@ def _link_record_ids(value: object) -> list[str]:
     return []
 
 
+def _has_base_version_reference(value: object) -> bool:
+    """Return whether a base-version field contains a semantic value."""
+    return bool(_link_record_ids(value) or _lookup_text(value))
+
+
 def _version_no(record: dict[str, Any]) -> str:
     value = record.get("fields", {}).get("version_no")
     if value in (None, "") or isinstance(value, bool):
@@ -705,7 +710,10 @@ class SubmissionEnrichment:
         else:
             preset = self._find_preset(preset_key)
         operation = "UPDATE" if preset else "CREATE"
-        if not preset and (fields.get("base_version_id") or fields.get(BASE_VERSION_NO_TEXT_FIELD)):
+        if not preset and (
+            _has_base_version_reference(fields.get("base_version_id"))
+            or _lookup_text(fields.get(BASE_VERSION_NO_TEXT_FIELD))
+        ):
             raise CandidateFailure(
                 "Submission contains a base version but no matching Preset; cannot safely classify UPDATE as CREATE"
             )
