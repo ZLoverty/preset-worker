@@ -409,6 +409,50 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         self.assertEqual(result.base_version_id, "P42@v7")
         self.assertFalse(client.updates)
 
+    def test_preserve_status_recomputes_ready_submission_without_status_change(self):
+        client = FakeClient({"name": "same", "version": "1"})
+        client.submission["fields"]["status"] = "READY_FOR_REVIEW"
+
+        result = SubmissionEnrichment(client).enrich_submission("S123", preserve_status=True)
+
+        self.assertEqual(result.status, "READY_FOR_REVIEW")
+        self.assertEqual(client.updates[-1]["status"], "READY_FOR_REVIEW")
+
+    def test_preserve_status_keeps_status_on_validation_failure(self):
+        client = FakeClient(b"not-json")
+        client.submission["fields"]["status"] = "DRAFT"
+
+        with self.assertRaises(ValidationFailure):
+            SubmissionEnrichment(client).enrich_submission("S123", preserve_status=True)
+
+        self.assertEqual(client.updates[-1]["status"], "DRAFT")
+
+    def test_normalize_json_only_does_not_resolve_operation_or_change_status(self):
+        client = FakeClient({"name": "same", "version": "1"})
+        client.submission["fields"].update({"status": "DRAFT", "operation": "UPDATE"})
+        client.presets = [{"fields": {"preset_key": client.submission["fields"]["preset_key"]}}]
+
+        result = SubmissionEnrichment(client).enrich_submission("S123", normalize_json_only=True)
+
+        self.assertTrue(result["normalized"])
+        self.assertEqual(client.submission["fields"]["status"], "DRAFT")
+        self.assertEqual(client.submission["fields"]["operation"], "UPDATE")
+        self.assertEqual(client.updates, [{"canonical_json": [{"file_token": "canonical-1"}]}])
+
+    def test_normalize_json_batch_filters_slicer_and_continues(self):
+        client = FakeClient({"name": "same", "version": "1"})
+        other = FakeClient({"name": "other", "version": "1"}).submission
+        other["record_id"] = "record-2"
+        other["fields"]["submission_id"] = "S124"
+        other["fields"]["slicer"] = [{"text": "OrcaSlicer"}]
+        client.list_records = lambda table_id, **kwargs: [client.submission, other]
+
+        result = SubmissionEnrichment(client).normalize_json_batch(slicer="Bambu Studio")
+
+        self.assertEqual(result["matched"], 1)
+        self.assertEqual(result["normalized"], 1)
+        self.assertEqual(result["failed"], 0)
+
     def test_backfill_uses_linked_historical_version_only(self):
         client = FakeClient({"name": "same", "version": "1"})
         client.submission["fields"].update({

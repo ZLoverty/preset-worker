@@ -10,6 +10,7 @@ from ..diff import UnifiedDiff
 
 
 SLICER_ID_ALIASES = {
+    "Bambu Studio": "BambuStudio",
     "Flash Studio": "FlashStudio",
     "OrcaSlicer (Snapmaker)": "SnapmakerOrcaSlicer",
     "OrcaSlicer Snapmaker": "SnapmakerOrcaSlicer",

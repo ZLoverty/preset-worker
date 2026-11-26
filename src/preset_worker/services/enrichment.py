@@ -771,15 +771,24 @@ class SubmissionEnrichment:
         submission_id: str,
         *,
         record: dict[str, Any] | None = None,
+        preserve_status: bool = False,
+        normalize_json_only: bool = False,
     ) -> EnrichmentResult:
         with lifecycle_timing(submission_id, "enrich"):
-            return self._enrich_submission_timed(submission_id, record=record)
+            return self._enrich_submission_timed(
+                submission_id,
+                record=record,
+                preserve_status=preserve_status,
+                normalize_json_only=normalize_json_only,
+            )
 
     def _enrich_submission_timed(
         self,
         submission_id: str,
         *,
         record: dict[str, Any] | None = None,
+        preserve_status: bool = False,
+        normalize_json_only: bool = False,
     ) -> EnrichmentResult:
         timing = current_timing()
         if record is None:
@@ -792,12 +801,18 @@ class SubmissionEnrichment:
             with timing.stage("reuse_discovered_submission"):
                 record = record
         fields = record.get("fields", {})
-        if fields.get("status") == "READY_FOR_REVIEW":
+        original_status = fields.get("status")
+        if normalize_json_only:
+            return self._normalize_json_only(record, submission_id)
+        if original_status == "READY_FOR_REVIEW" and not preserve_status:
             return self._frozen_result(record)
-        if fields.get("status") != FORMAL_ENRICHMENT_STATUS:
+        if not preserve_status and original_status != FORMAL_ENRICHMENT_STATUS:
             raise RuntimeError(
-                f"Submission is {fields.get('status', 'unknown')} and is not eligible for formal enrichment."
+                f"Submission is {original_status or 'unknown'} and is not eligible for formal enrichment."
             )
+        # Manual normalization may intentionally target records in any lifecycle
+        # state. Keep the original status in every write, including failures.
+        write_status = original_status if preserve_status else None
         try:
             if timing:
                 with timing.stage("candidate_processing"):
@@ -805,15 +820,21 @@ class SubmissionEnrichment:
             else:
                 candidate = self.process_candidate(record, submission_id)
         except ValidationFailure as exc:
-            self.client.update_submission(record["record_id"], {"validation": json.dumps(exc.validation, ensure_ascii=False), "status": "VALIDATION_FAILED", "consistency_report": ""})
+            failure_fields = {"validation": json.dumps(exc.validation, ensure_ascii=False), "consistency_report": ""}
+            failure_fields["status"] = write_status or "VALIDATION_FAILED"
+            self.client.update_submission(record["record_id"], failure_fields)
             raise
         except CandidateFailure as exc:
             validation = {"valid": False, "errors": [str(exc)], "warnings": []}
-            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED", "consistency_report": ""})
+            failure_fields = {"validation": json.dumps(validation, ensure_ascii=False), "consistency_report": ""}
+            failure_fields["status"] = write_status or "VALIDATION_FAILED"
+            self.client.update_submission(record["record_id"], failure_fields)
             raise ValidationFailure(validation) from exc
         except UnsupportedSlicerError as exc:
             validation = {"valid": False, "errors": [str(exc)], "warnings": []}
-            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED", "consistency_report": ""})
+            failure_fields = {"validation": json.dumps(validation, ensure_ascii=False), "consistency_report": ""}
+            failure_fields["status"] = write_status or "VALIDATION_FAILED"
+            self.client.update_submission(record["record_id"], failure_fields)
             raise
         # This import stays local because consistency_preview reuses the
         # enrichment attachment helpers.
@@ -829,7 +850,10 @@ class SubmissionEnrichment:
                 file_token = self._canonical_attachment(record, submission_id, candidate.canonical_artifact)
         else:
             file_token = self._canonical_attachment(record, submission_id, candidate.canonical_artifact)
-        result = EnrichmentResult(**candidate.__dict__, status="READY_FOR_REVIEW")
+        result = EnrichmentResult(
+            **candidate.__dict__,
+            status=original_status if preserve_status else "READY_FOR_REVIEW",
+        )
         result_fields = {
                 "operation": result.operation,
                 "base_version_id": [candidate.base_version_record_id]
@@ -848,6 +872,73 @@ class SubmissionEnrichment:
         else:
             update_submission_with_consistency_report(self.client, record["record_id"], result_fields)
         return result
+
+    def _normalize_json_only(self, record: dict[str, Any], submission_id: str) -> dict[str, Any]:
+        """Canonicalize uploaded JSON without touching lifecycle or operation fields."""
+        fields = record.get("fields", {})
+        try:
+            pi_code = _lookup_text(fields.get("pi_code"))
+            printer = _lookup_text(fields.get("printer") or fields.get("machine"))
+            slicer = canonical_slicer_id(_lookup_text(fields.get("slicer")))
+            pm_method_version = _submission_method_version(fields)
+            if not pi_code or not printer or not slicer:
+                raise ValueError("Submission 缺少 pi_code、machine/printer 或 slicer")
+            if not pm_method_version:
+                raise ValueError("Submission 缺少 pm_method_version（当前表字段为 method_version）")
+        except ValueError as exc:
+            raise ValidationFailure({"valid": False, "errors": [str(exc)], "warnings": []}) from exc
+
+        attachments = _preset_data_attachments(fields)
+        if not attachments:
+            raise ValidationFailure({"valid": False, "errors": ["Submission 缺少 uploaded_json 附件"], "warnings": []})
+        uploaded_attachment = attachments[0]
+        artifact = Artifact(
+            content=_timed_download(self.client, uploaded_attachment, "uploaded_attachment_download"),
+            filename=str(uploaded_attachment.get("name") or uploaded_attachment.get("file_name") or f"{submission_id}.artifact"),
+            media_type=uploaded_attachment.get("type") or uploaded_attachment.get("mime_type"),
+        )
+        processor = self.processor_registry.get(slicer)
+        if processor is None:
+            raise UnsupportedSlicerError(slicer)
+        context = ProcessingContext(
+            pi_code=pi_code,
+            printer=printer,
+            slicer=slicer,
+            pm_method_version=pm_method_version,
+        )
+        try:
+            processed = process_artifact(processor, artifact, context)
+        except ValueError as exc:
+            validation = getattr(exc, "validation", None)
+            if validation is not None:
+                raise ValidationFailure(validation.as_dict()) from exc
+            raise
+        if not processed.validation_result.valid:
+            raise ValidationFailure(processed.validation_result.as_dict())
+
+        file_token = self._canonical_attachment(record, submission_id, processed.canonical_artifact)
+        self.client.update_submission(record["record_id"], {"canonical_json": [{"file_token": file_token}]})
+        return {"canonical_json": file_token, "normalized": True}
+
+    def normalize_json_batch(self, *, slicer: str = "BambuStudio", limit: int | None = None) -> dict[str, Any]:
+        """Normalize matching Submissions without changing lifecycle fields."""
+        target_slicer = canonical_slicer_id(slicer)
+        records = self.client.list_records(self.client.submission_table_id, limit=limit)
+        matched = 0
+        normalized = 0
+        failures: list[dict[str, str]] = []
+        for record in records:
+            fields = record.get("fields", {})
+            if canonical_slicer_id(_lookup_text(fields.get("slicer"))) != target_slicer:
+                continue
+            matched += 1
+            submission_id = _lookup_text(fields.get("submission_id")) or str(record.get("record_id") or record.get("id") or "")
+            try:
+                self.enrich_submission(record=record, submission_id=submission_id, normalize_json_only=True)
+                normalized += 1
+            except Exception as exc:
+                failures.append({"submission_id": submission_id, "error": str(exc)})
+        return {"slicer": target_slicer, "matched": matched, "normalized": normalized, "failed": len(failures), "failures": failures}
 
     def backfill_base_version_no_text(self, *, limit: int | None = None) -> dict[str, int]:
         """Repair historical UPDATE submissions from their linked base version.
