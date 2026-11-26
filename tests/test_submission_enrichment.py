@@ -172,6 +172,43 @@ class SubmissionEnrichmentTests(unittest.TestCase):
         self.assertEqual(client.get_record_calls, [("version", "version-record-7")])
         self.assertFalse([call for call in client.list_calls if call[0] == client.version_table_id])
 
+    def test_preview_update_resolves_reused_canonical_reference_from_source_submission(self):
+        client = FakeClient({"name": "new", "version": "1", "temperature": "220"})
+        client.submission["fields"].update({
+            "status": "PREVIEW_REQUESTED",
+            "base_version_id": [{"record_ids": ["version-record-7"]}],
+            "canonical_json": [{"file_token": "base"}],
+        })
+        client.presets = [{
+            "fields": {
+                "preset_key": client.submission["fields"]["preset_key"],
+                "current_version_id": [{"text": "P42@v7"}],
+            }
+        }]
+        client.versions = [{
+            "record_id": "version-record-7",
+            "fields": {
+                "version_id": "P42@v7",
+                "version_no": 7,
+                "canonical_json": [{"name": "canonical.json"}],
+                "source_submission": [{"record_ids": ["record-1"]}],
+            },
+        }]
+        client.files["base"] = b'{"name":"old","version":"1","temperature":"220"}'
+        original_get_record = client.get_record
+
+        def get_record(table_id, record_id):
+            if table_id == client.submission_table_id and record_id == "record-1":
+                return client.submission
+            return original_get_record(table_id, record_id)
+
+        client.get_record = get_record
+
+        result = PreviewService(client).preview_submission("S123")
+
+        self.assertEqual(result.base_version_id, "P42@v7")
+        self.assertIn("base", client.downloads)
+
     def test_update_preview_uses_stale_linked_snapshot_not_latest_preset_version(self):
         client = FakeClient({"name": "new", "version": "1", "temperature": "220"})
         client.submission["fields"].update({

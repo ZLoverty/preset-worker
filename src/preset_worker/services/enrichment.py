@@ -600,6 +600,21 @@ class SubmissionEnrichment:
         if not attachments:
             raise RuntimeError(f"base version has no canonical_json: {base_version_id}")
         attachment = attachments[0]
+        # A PresetVersion may reuse the Submission attachment reference without
+        # receiving downloadable attachment metadata in the record response.
+        # Resolve the original reference through source_submission in that case.
+        if not _attachment_url(attachment):
+            source_ids = _link_record_ids(fields.get("source_submission"))
+            if len(source_ids) == 1:
+                source_submission = self.client.get_record(
+                    self.client.submission_table_id,
+                    source_ids[0],
+                )
+                source_attachments = _attachment_list(
+                    source_submission.get("fields", {}).get("canonical_json")
+                )
+                if source_attachments:
+                    attachment = source_attachments[0]
         content = _timed_download(self.client, attachment, "base_attachment_download")
         filename = str(attachment.get("name") or attachment.get("file_name") or f"{base_version_id}.artifact")
         media_type = attachment.get("type") or attachment.get("mime_type")
