@@ -95,10 +95,14 @@ def _parse_model(data: bytes) -> tuple[list[ObjectContext], list[PlateContext]]:
     return objects, plates
 
 
-def _raw_parameters(config: dict[str, Any]) -> list[RawParameterValue]:
+def _raw_parameters(
+    config: dict[str, Any],
+    parameter_names: tuple[str, ...] | frozenset[str] = PRIORITY_PARAMETERS,
+) -> list[RawParameterValue]:
+    selected = set(parameter_names)
     values: list[RawParameterValue] = []
     for name, raw in config.items():
-        if name not in PRIORITY_PARAMETERS:
+        if name not in selected:
             continue
         # Keep the complete array intact. Resolution, not extraction, decides
         # whether an array index can be selected for a given context.
@@ -122,7 +126,12 @@ def _slots(config: dict[str, Any]) -> list[FilamentSlot]:
     ]
 
 
-def parse_bambu_3mf(artifact: Any, *, limits: Any = None) -> BambuProjectSnapshot:
+def parse_bambu_3mf(
+    artifact: Any,
+    *,
+    limits: Any = None,
+    parameter_names: tuple[str, ...] | frozenset[str] = PRIORITY_PARAMETERS,
+) -> BambuProjectSnapshot:
     data = artifact.content if hasattr(artifact, "content") else artifact
     if not isinstance(data, bytes):
         raise TypeError("3MF artifact must contain bytes")
@@ -141,7 +150,7 @@ def parse_bambu_3mf(artifact: Any, *, limits: Any = None) -> BambuProjectSnapsho
             snapshot.issues.append({"code": "INVALID_PROJECT_SETTINGS_TYPE", "message": "project settings must be object"})
             return snapshot
         snapshot.project_settings = config
-        snapshot.raw_parameters = _raw_parameters(config)
+        snapshot.raw_parameters = _raw_parameters(config, parameter_names)
         snapshot.filament_slots = _slots(config)
         snapshot.project_context = ProjectContext(
             config.get("printer_model"),

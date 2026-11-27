@@ -36,10 +36,13 @@ def _rows(comparisons: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "path": comparison["parameter_id"],
                 "index": None,
                 "status": comparison["status"],
-                "preset_value": comparison["preset"].get("raw_value"),
-                "project_value": comparison["project"].get("raw_value"),
+                "preset_value": comparison["preset"].get("selected_value"),
+                "project_value": comparison["project"].get("selected_value"),
+                "preset_original_array": comparison["preset"].get("original_array"),
+                "project_original_array": comparison["project"].get("original_array"),
                 "preset_source_path": comparison["preset"].get("source_path"),
                 "project_source_path": comparison["project"].get("source_path"),
+                "diagnostic": comparison.get("diagnostic", {}),
             })
             continue
         for element in elements:
@@ -50,11 +53,14 @@ def _rows(comparisons: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "status": element["status"],
                 "preset_value": element.get("preset_value"),
                 "project_value": element.get("project_value"),
+                "preset_original_array": comparison["preset"].get("original_array"),
+                "project_original_array": comparison["project"].get("original_array"),
                 "preset_normalized_value": element.get("preset_normalized_value"),
                 "project_normalized_value": element.get("project_normalized_value"),
                 "preset_source_path": element.get("preset_source_path"),
                 "project_source_path": element.get("project_source_path"),
                 "evidence": element.get("evidence", []),
+                "diagnostic": comparison.get("diagnostic", {}),
             })
     return rows
 
@@ -120,7 +126,10 @@ def validate_native_consistency(
     )
 
     try:
-        snapshot = parse_bambu_3mf(project_artifact)
+        snapshot = parse_bambu_3mf(
+            project_artifact,
+            parameter_names=processor.important_parameter_paths,
+        )
     except Exception as exc:
         report["errors"].append(f"invalid {slicer_id} 3MF: {exc}")
         report["selection"] = {"status": "UNRESOLVED", "filament_slot_id": None, "matching_slot_ids": [], "evidence": ["project archive could not be safely parsed"]}
@@ -160,6 +169,11 @@ def validate_native_consistency(
             # explicitly non-comparable until identity is resolved.
             comparison["status"] = "UNRESOLVED"
             comparison["identity_resolution"] = selection["status"]
+            comparison.setdefault("diagnostic", {}).update({
+                "resolution": "FILAMENT_IDENTITY_UNRESOLVED",
+                "stage": "selection",
+                "reason": selection.get("reason", "filament identity did not resolve"),
+            })
             for element in comparison.get("elements", []):
                 element["status"] = "UNRESOLVED"
                 element.setdefault("evidence", []).append("filament identity did not resolve to a project slot")

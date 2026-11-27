@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-from .services.enrichment import SubmissionEnrichment
+from .services.enrichment import SubmissionEnrichment, ValidationFailure
 from .services.enrichment_api import enrich_submission
 from .services.publication_api import publish_submission
 from .config import build_feishu_client, load_runtime_config
@@ -33,6 +33,22 @@ def main(
     commands = parser.add_subparsers(dest="command", required=True)
     enrich_parser = commands.add_parser("enrich", help="enrich one Submission")
     enrich_parser.add_argument("submission_id")
+    enrich_parser.add_argument(
+        "--preserve-status",
+        action="store_true",
+        help="recompute enrichment fields without changing the Submission status",
+    )
+    enrich_parser.add_argument(
+        "--normalize-json-only",
+        action="store_true",
+        help="normalize uploaded JSON and update only canonical_json",
+    )
+    batch_parser = commands.add_parser(
+        "normalize-json-batch",
+        help="normalize uploaded JSON for all Submissions matching a slicer",
+    )
+    batch_parser.add_argument("--slicer", default="BambuStudio")
+    batch_parser.add_argument("--limit", type=int)
     backfill_parser = commands.add_parser(
         "backfill-base-version-no-text",
         help="repair historical Submission base version display snapshots",
@@ -46,10 +62,25 @@ def main(
 
     try:
         if args.command == "enrich":
-            service = enrich_service or (lambda submission_id: enrich_submission(submission_id, env_path=args.env))
-            result = service(args.submission_id)
+            if enrich_service is not None:
+                result = enrich_service(args.submission_id)
+            else:
+                result = enrich_submission(
+                    args.submission_id,
+                    env_path=args.env,
+                    preserve_status=args.preserve_status,
+                    normalize_json_only=args.normalize_json_only,
+                )
             print(json.dumps(_result_dict(result), ensure_ascii=False, indent=2, default=str))
             return 0
+        elif args.command == "normalize-json-batch":
+            client = build_feishu_client(args.env)
+            result = SubmissionEnrichment(client).normalize_json_batch(
+                slicer=args.slicer,
+                limit=args.limit,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0 if result["failed"] == 0 else 1
         elif args.command == "backfill-base-version-no-text":
             client = build_feishu_client(args.env)
             result = SubmissionEnrichment(client).backfill_base_version_no_text(limit=args.limit)
@@ -92,6 +123,9 @@ def main(
                     signal.signal(signum, handler)
             return 0
     except Exception as exc:
+        if isinstance(exc, ValidationFailure):
+            print(json.dumps(exc.validation, ensure_ascii=False, indent=2), file=sys.stderr)
+            return 1
         print(f"错误: {exc}", file=sys.stderr)
         return 1
 

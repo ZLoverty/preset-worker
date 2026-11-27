@@ -6,6 +6,11 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Iterable
 
 
+MIN_IMPORTANCE = 0
+MAX_SOURCE_IMPORTANCE = 5
+MAX_COVERAGE_IMPORTANCE = MAX_SOURCE_IMPORTANCE * 2
+
+
 @dataclass(frozen=True)
 class CoverageFieldConfig:
     pi_identity: str = "PI Code"
@@ -59,7 +64,7 @@ class CoverageTableConfig:
 class SourceRecord:
     identity: str
     record_id: str
-    importance: int
+    importance: int | None
     enabled: bool
 
 
@@ -68,7 +73,7 @@ class CoveragePlan:
     key: str
     pi: SourceRecord
     printer: SourceRecord
-    importance: int
+    importance: int | None
     active: bool
 
 
@@ -92,8 +97,12 @@ def _record_id(record: dict[str, Any]) -> str:
 
 def _importance(value: Any, label: str, errors: list[str]) -> int | None:
     raw = _text(value)
-    if isinstance(value, bool) or raw not in {"0", "1"}:
-        errors.append(f"{label}: importance must be integer 0 or 1, got {value!r}")
+    if raw == "":
+        return None
+    if isinstance(value, bool) or not raw.isdigit() or not MIN_IMPORTANCE <= int(raw) <= MAX_SOURCE_IMPORTANCE:
+        errors.append(
+            f"{label}: importance must be integer {MIN_IMPORTANCE}-{MAX_SOURCE_IMPORTANCE}, got {value!r}"
+        )
         return None
     return int(raw)
 
@@ -137,7 +146,7 @@ def _source_records(
         seen[identity_key] = record_id
         importance = _importance(fields.get(importance_field), f"{prefix} {identity!r}", errors)
         enabled = True if not enabled_field else _enabled(fields.get(enabled_field), f"{prefix} {identity!r}", errors)
-        if importance is not None and enabled is not None:
+        if enabled is not None:
             result.append(SourceRecord(identity, record_id, importance, enabled))
     return result
 
@@ -200,7 +209,11 @@ def build_plan(
             key=f"{pi.identity}@{printer.identity}",
             pi=pi,
             printer=printer,
-            importance=pi.importance + printer.importance,
+            importance=(
+                pi.importance + printer.importance
+                if pi.importance is not None and printer.importance is not None
+                else None
+            ),
             active=pi.enabled and printer.enabled,
         )
         for pi in pis
@@ -246,11 +259,12 @@ def _is_active(value: Any) -> bool:
 def summarize(plans: list[CoveragePlan], existing: dict[str, dict[str, Any]], config: CoverageTableConfig, errors: list[str], enabled_pi_codes: int, enabled_printers: int, orphan_count: int = 0) -> dict[str, Any]:
     fields = config.fields
     to_create = to_update = to_deactivate = unchanged = 0
-    importance_distribution = {"0": 0, "1": 0, "2": 0}
+    importance_distribution = {str(value): 0 for value in range(MAX_COVERAGE_IMPORTANCE + 1)}
+    importance_distribution["null"] = 0
     plan_keys = set()
     for plan in plans:
         plan_keys.add(plan.key.casefold())
-        importance_distribution[str(plan.importance)] += 1
+        importance_distribution["null" if plan.importance is None else str(plan.importance)] += 1
         current_record = existing.get(plan.key.casefold())
         if current_record is None:
             to_create += 1
@@ -312,7 +326,10 @@ def synchronize(client: Any, config: CoverageTableConfig, *, dry_run: bool) -> d
             "records_to_update": 0,
             "records_to_deactivate": 0,
             "unchanged_records": 0,
-            "importance_distribution": {"0": 0, "1": 0, "2": 0},
+            "importance_distribution": {
+                **{str(value): 0 for value in range(MAX_COVERAGE_IMPORTANCE + 1)},
+                "null": 0,
+            },
             "validation_errors": [f"source read failed; no writes or deactivation allowed: {exc}"],
         }
     field_by_name = {str(item.get("field_name")): item for item in field_items}

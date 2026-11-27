@@ -3,6 +3,7 @@
 from .bambu_studio import BambuStudioProcessor
 from .creality_print import CrealityPrintProcessor
 from .elegoo_slicer import ElegooSlicerProcessor
+from .flash_studio import FlashStudioProcessor
 from .orca_slicer import OrcaSlicerProcessor
 from .prusa_slicer import PrusaSlicerProcessor
 from .snapmaker_orca import SnapmakerOrcaSlicerProcessor
@@ -25,12 +26,29 @@ from .contracts import (
     ValidationResult,
     ValidationStatus,
 )
+from .capabilities import (
+    DEFAULT_CONSISTENCY_CAPABILITIES,
+    SUPPORTED,
+    UNSUPPORTED,
+    RegistrationIssue,
+    check_registration_completeness,
+)
+from .parameter_catalog import (
+    IMPORTANT_PARAMETER_CATALOG,
+    ParameterDefinition,
+    build_coverage_inventory,
+    classify_native_path,
+    important_paths_for_slicer,
+    system_metadata_paths_for_slicer,
+    validate_catalog,
+)
 from .registry import default_processor_registry
 
 __all__ = [
     "BambuStudioProcessor",
     "CrealityPrintProcessor",
     "ElegooSlicerProcessor",
+    "FlashStudioProcessor",
     "OrcaSlicerProcessor",
     "PrusaSlicerProcessor",
     "SnapmakerOrcaSlicerProcessor",
@@ -50,4 +68,16 @@ __all__ = [
     "ValidationResult",
     "ValidationStatus",
     "default_processor_registry",
+    "DEFAULT_CONSISTENCY_CAPABILITIES",
+    "SUPPORTED",
+    "UNSUPPORTED",
+    "RegistrationIssue",
+    "check_registration_completeness",
+    "IMPORTANT_PARAMETER_CATALOG",
+    "ParameterDefinition",
+    "build_coverage_inventory",
+    "classify_native_path",
+    "important_paths_for_slicer",
+    "system_metadata_paths_for_slicer",
+    "validate_catalog",
 ]

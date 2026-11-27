@@ -104,7 +104,7 @@ class P9D4PrusaTests(unittest.TestCase):
 
     def test_missing_preset_parameter_stays_missing(self):
         preset, project = self.pair()
-        source = preset.content.replace(b"max_fan_speed = 100\n", b"")
+        source = preset.content.replace(b"max_fan_speed = 100\r\n", b"")
         report = validate_prusa_slicer_consistency(
             Artifact(source, preset.filename, preset.media_type), project,
         )

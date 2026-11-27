@@ -52,6 +52,39 @@ class CoverageSyncTests(unittest.TestCase):
         self.assertEqual((enabled_pis, enabled_printers), (1, 2))
         self.assertEqual(existing, {})
 
+    def test_accepts_source_importance_range_zero_to_five(self):
+        plans, _, errors, _, _, _ = build_plan(
+            [pi("pi-1", "PI-A", 5)],
+            [printer("printer-1", "Printer-A", 5)],
+            [],
+            self.config,
+            field_names=self.field_names,
+        )
+        self.assertFalse(errors)
+        self.assertEqual(plans[0].importance, 10)
+
+    def test_rejects_source_importance_outside_zero_to_five(self):
+        _, _, errors, _, _, _ = build_plan(
+            [pi("pi-1", "PI-A", 6), pi("pi-2", "PI-B", -1)],
+            [printer("printer-1", "Printer-A", 0)],
+            [],
+            self.config,
+            field_names=self.field_names,
+        )
+        self.assertEqual(len(errors), 2)
+        self.assertTrue(all("importance must be integer 0-5" in error for error in errors))
+
+    def test_allows_missing_source_importance(self):
+        plans, _, errors, _, _, _ = build_plan(
+            [pi("pi-1", "PI-A", None)],
+            [printer("printer-1", "Printer-A", 5)],
+            [],
+            self.config,
+            field_names=self.field_names,
+        )
+        self.assertFalse(errors)
+        self.assertEqual(plans[0].importance, None)
+
     def test_duplicate_sources_and_targets_are_validation_errors(self):
         _, _, errors, _, _, _ = build_plan(
             [pi("pi-1", "PI-A", 0), pi("pi-2", "pi-a", 1)],

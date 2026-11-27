@@ -151,7 +151,18 @@ def _api_json(url: str, token: str, *, method: str = "GET", payload: dict | None
     if timing:
         path = url.split("?", 1)[0]
         endpoint = "bitable_record" if "/records" in path else "bitable_app" if "/apps/" in path else "tenant_auth" if "/auth/" in path else "feishu_api"
-        operation = "update_record" if method == "PUT" else "list_records" if path.endswith("/records") else "authenticate" if "/auth/" in path else "api_request"
+        if "/auth/" in path:
+            operation = "authenticate"
+        elif method == "GET" and "/records/" in path:
+            operation = "get_record"
+        elif method == "GET" and path.endswith("/records"):
+            operation = "list_records"
+        elif method == "GET" and path.endswith("/fields"):
+            operation = "list_fields"
+        elif method == "PUT" and "/records/" in path:
+            operation = "update_record"
+        else:
+            operation = "api_request"
         timing.api(operation=operation, method=method, endpoint=endpoint, duration_ms=(time.perf_counter() - started) * 1000, status=status, retry_count=retry_count, succeeded=succeeded, request_bytes=len(request_body or b""), response_bytes=len(response_body))
     if not succeeded:
         raise RuntimeError(
@@ -342,6 +353,14 @@ class FeishuClient:
             filter_expression=f'CurrentValue.[preset_key]="{escaped}"',
         )
 
+    def find_version_by_id(self, version_id: str) -> list[dict[str, Any]]:
+        """Find a PresetVersion by its exact business identifier."""
+        escaped = version_id.replace(chr(34), chr(92) + chr(34))
+        return self.list_records(
+            self.version_table_id,
+            filter_expression=f'CurrentValue.[version_id]="{escaped}"',
+        )
+
     def create_record(self, table_id: str, fields: dict[str, Any]) -> dict[str, Any]:
         url = f"{BITABLE_API}/apps/{self.app_token}/tables/{table_id}/records"
         return self._request_json(url, method="POST", payload={"fields": fields}).get("data", {}).get("record", {})
@@ -463,6 +482,11 @@ def _link_record_ids(value: object) -> list[str]:
     return []
 
 
+def _has_base_version_reference(value: object) -> bool:
+    """Return whether a base-version field contains a semantic value."""
+    return bool(_link_record_ids(value) or _lookup_text(value))
+
+
 def _version_no(record: dict[str, Any]) -> str:
     value = record.get("fields", {}).get("version_no")
     if value in (None, "") or isinstance(value, bool):
@@ -531,7 +555,76 @@ class SubmissionEnrichment:
             raise CandidateFailure(f"preset_key 存在重复 Preset: {preset_key}")
         return matches[0] if matches else None
 
-    def _base_artifact(self, preset: dict[str, Any]) -> tuple[str, str | None, str, Artifact]:
+    def _base_artifact(self, base_reference: object) -> tuple[str, str | None, str, Artifact]:
+        """Load the exact historical version referenced by Submission.base_version_id."""
+        linked_ids = _link_record_ids(base_reference)
+        if len(linked_ids) > 1:
+            raise CandidateFailure("Submission.base_version_id must contain exactly one PresetVersion record")
+        if linked_ids:
+            record_id = linked_ids[0]
+            try:
+                version = self.client.get_record(self.client.version_table_id, record_id)
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    f"Unable to retrieve PresetVersion referenced by base_version_id {record_id}: {exc}"
+                ) from exc
+            if not version:
+                raise RuntimeError(f"Submission.base_version_id references nonexistent PresetVersion record: {record_id}")
+            returned_id = version.get("record_id") or version.get("id")
+            if returned_id and returned_id != record_id:
+                raise RuntimeError(f"Submission.base_version_id resolved to a different PresetVersion record: {record_id}")
+        else:
+            base_version_id = _lookup_text(base_reference)
+            if not base_version_id:
+                raise CandidateFailure("UPDATE Submission is missing base_version_id; provide the linked PresetVersion record")
+            find_version = getattr(self.client, "find_version_by_id", None)
+            if callable(find_version):
+                matches = list(find_version(base_version_id))
+            else:
+                escaped = base_version_id.replace(chr(34), chr(92) + chr(34))
+                matches = list(self.client.list_records(
+                    self.client.version_table_id,
+                    filter_expression=f'CurrentValue.[version_id]="{escaped}"',
+                ))
+            if len(matches) > 1:
+                raise RuntimeError(f"Multiple PresetVersion records match base_version_id: {base_version_id}")
+            if not matches:
+                raise RuntimeError(f"No PresetVersion exists for base_version_id: {base_version_id}")
+            version = matches[0]
+        fields = version.get("fields", {})
+        base_version_id = _lookup_text(fields.get("version_id"))
+        if not base_version_id:
+            raise RuntimeError("Referenced PresetVersion is missing version_id")
+        base_version_no_text = _version_no(version)
+        attachments = _attachment_list(fields.get("canonical_json"))
+        if not attachments:
+            raise RuntimeError(f"base version has no canonical_json: {base_version_id}")
+        attachment = attachments[0]
+        # A PresetVersion may reuse the Submission attachment reference without
+        # receiving downloadable attachment metadata in the record response.
+        # Resolve the original reference through source_submission in that case.
+        if not _attachment_url(attachment):
+            source_ids = _link_record_ids(fields.get("source_submission"))
+            if len(source_ids) == 1:
+                source_submission = self.client.get_record(
+                    self.client.submission_table_id,
+                    source_ids[0],
+                )
+                source_attachments = _attachment_list(
+                    source_submission.get("fields", {}).get("canonical_json")
+                )
+                if source_attachments:
+                    attachment = source_attachments[0]
+        content = _timed_download(self.client, attachment, "base_attachment_download")
+        filename = str(attachment.get("name") or attachment.get("file_name") or f"{base_version_id}.artifact")
+        media_type = attachment.get("type") or attachment.get("mime_type")
+        return base_version_id, version.get("record_id") or version.get("id"), base_version_no_text, Artifact(
+            content=content,
+            filename=filename,
+            media_type=media_type,
+        )
+
+    def _base_artifact_from_preset_legacy(self, preset: dict[str, Any]) -> tuple[str, str | None, str, Artifact]:
         preset_fields = preset.get("fields", {})
         base_version_id = _lookup_text(preset_fields.get("current_version_id"))
         if not base_version_id:
@@ -632,9 +725,25 @@ class SubmissionEnrichment:
         else:
             preset = self._find_preset(preset_key)
         operation = "UPDATE" if preset else "CREATE"
-        base_version_id, base_version_record_id, base_version_no_text, base_artifact = (
-            self._base_artifact(preset) if preset else ("", None, "", None)
-        )
+        if not preset and (
+            _has_base_version_reference(fields.get("base_version_id"))
+            or _lookup_text(fields.get(BASE_VERSION_NO_TEXT_FIELD))
+        ):
+            raise CandidateFailure(
+                "Submission contains a base version but no matching Preset; cannot safely classify UPDATE as CREATE"
+            )
+        if preset:
+            if timing:
+                with timing.stage("base_version_lookup", summary_key="feishu_read_ms"):
+                    base_version_id, base_version_record_id, base_version_no_text, base_artifact = (
+                        self._base_artifact(fields.get("base_version_id"))
+                    )
+            else:
+                base_version_id, base_version_record_id, base_version_no_text, base_artifact = (
+                    self._base_artifact(fields.get("base_version_id"))
+                )
+        else:
+            base_version_id, base_version_record_id, base_version_no_text, base_artifact = ("", None, "", None)
         return CandidateResult(
             operation=operation,
             preset_key=preset_key,
@@ -677,15 +786,24 @@ class SubmissionEnrichment:
         submission_id: str,
         *,
         record: dict[str, Any] | None = None,
+        preserve_status: bool = False,
+        normalize_json_only: bool = False,
     ) -> EnrichmentResult:
         with lifecycle_timing(submission_id, "enrich"):
-            return self._enrich_submission_timed(submission_id, record=record)
+            return self._enrich_submission_timed(
+                submission_id,
+                record=record,
+                preserve_status=preserve_status,
+                normalize_json_only=normalize_json_only,
+            )
 
     def _enrich_submission_timed(
         self,
         submission_id: str,
         *,
         record: dict[str, Any] | None = None,
+        preserve_status: bool = False,
+        normalize_json_only: bool = False,
     ) -> EnrichmentResult:
         timing = current_timing()
         if record is None:
@@ -698,12 +816,18 @@ class SubmissionEnrichment:
             with timing.stage("reuse_discovered_submission"):
                 record = record
         fields = record.get("fields", {})
-        if fields.get("status") == "READY_FOR_REVIEW":
+        original_status = fields.get("status")
+        if normalize_json_only:
+            return self._normalize_json_only(record, submission_id)
+        if original_status == "READY_FOR_REVIEW" and not preserve_status:
             return self._frozen_result(record)
-        if fields.get("status") != FORMAL_ENRICHMENT_STATUS:
+        if not preserve_status and original_status != FORMAL_ENRICHMENT_STATUS:
             raise RuntimeError(
-                f"Submission is {fields.get('status', 'unknown')} and is not eligible for formal enrichment."
+                f"Submission is {original_status or 'unknown'} and is not eligible for formal enrichment."
             )
+        # Manual normalization may intentionally target records in any lifecycle
+        # state. Keep the original status in every write, including failures.
+        write_status = original_status if preserve_status else None
         try:
             if timing:
                 with timing.stage("candidate_processing"):
@@ -711,15 +835,21 @@ class SubmissionEnrichment:
             else:
                 candidate = self.process_candidate(record, submission_id)
         except ValidationFailure as exc:
-            self.client.update_submission(record["record_id"], {"validation": json.dumps(exc.validation, ensure_ascii=False), "status": "VALIDATION_FAILED", "consistency_report": ""})
+            failure_fields = {"validation": json.dumps(exc.validation, ensure_ascii=False), "consistency_report": ""}
+            failure_fields["status"] = write_status or "VALIDATION_FAILED"
+            self.client.update_submission(record["record_id"], failure_fields)
             raise
         except CandidateFailure as exc:
             validation = {"valid": False, "errors": [str(exc)], "warnings": []}
-            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED", "consistency_report": ""})
+            failure_fields = {"validation": json.dumps(validation, ensure_ascii=False), "consistency_report": ""}
+            failure_fields["status"] = write_status or "VALIDATION_FAILED"
+            self.client.update_submission(record["record_id"], failure_fields)
             raise ValidationFailure(validation) from exc
         except UnsupportedSlicerError as exc:
             validation = {"valid": False, "errors": [str(exc)], "warnings": []}
-            self.client.update_submission(record["record_id"], {"validation": json.dumps(validation, ensure_ascii=False), "status": "VALIDATION_FAILED", "consistency_report": ""})
+            failure_fields = {"validation": json.dumps(validation, ensure_ascii=False), "consistency_report": ""}
+            failure_fields["status"] = write_status or "VALIDATION_FAILED"
+            self.client.update_submission(record["record_id"], failure_fields)
             raise
         # This import stays local because consistency_preview reuses the
         # enrichment attachment helpers.
@@ -735,7 +865,10 @@ class SubmissionEnrichment:
                 file_token = self._canonical_attachment(record, submission_id, candidate.canonical_artifact)
         else:
             file_token = self._canonical_attachment(record, submission_id, candidate.canonical_artifact)
-        result = EnrichmentResult(**candidate.__dict__, status="READY_FOR_REVIEW")
+        result = EnrichmentResult(
+            **candidate.__dict__,
+            status=original_status if preserve_status else "READY_FOR_REVIEW",
+        )
         result_fields = {
                 "operation": result.operation,
                 "base_version_id": [candidate.base_version_record_id]
@@ -754,6 +887,73 @@ class SubmissionEnrichment:
         else:
             update_submission_with_consistency_report(self.client, record["record_id"], result_fields)
         return result
+
+    def _normalize_json_only(self, record: dict[str, Any], submission_id: str) -> dict[str, Any]:
+        """Canonicalize uploaded JSON without touching lifecycle or operation fields."""
+        fields = record.get("fields", {})
+        try:
+            pi_code = _lookup_text(fields.get("pi_code"))
+            printer = _lookup_text(fields.get("printer") or fields.get("machine"))
+            slicer = canonical_slicer_id(_lookup_text(fields.get("slicer")))
+            pm_method_version = _submission_method_version(fields)
+            if not pi_code or not printer or not slicer:
+                raise ValueError("Submission 缺少 pi_code、machine/printer 或 slicer")
+            if not pm_method_version:
+                raise ValueError("Submission 缺少 pm_method_version（当前表字段为 method_version）")
+        except ValueError as exc:
+            raise ValidationFailure({"valid": False, "errors": [str(exc)], "warnings": []}) from exc
+
+        attachments = _preset_data_attachments(fields)
+        if not attachments:
+            raise ValidationFailure({"valid": False, "errors": ["Submission 缺少 uploaded_json 附件"], "warnings": []})
+        uploaded_attachment = attachments[0]
+        artifact = Artifact(
+            content=_timed_download(self.client, uploaded_attachment, "uploaded_attachment_download"),
+            filename=str(uploaded_attachment.get("name") or uploaded_attachment.get("file_name") or f"{submission_id}.artifact"),
+            media_type=uploaded_attachment.get("type") or uploaded_attachment.get("mime_type"),
+        )
+        processor = self.processor_registry.get(slicer)
+        if processor is None:
+            raise UnsupportedSlicerError(slicer)
+        context = ProcessingContext(
+            pi_code=pi_code,
+            printer=printer,
+            slicer=slicer,
+            pm_method_version=pm_method_version,
+        )
+        try:
+            processed = process_artifact(processor, artifact, context)
+        except ValueError as exc:
+            validation = getattr(exc, "validation", None)
+            if validation is not None:
+                raise ValidationFailure(validation.as_dict()) from exc
+            raise
+        if not processed.validation_result.valid:
+            raise ValidationFailure(processed.validation_result.as_dict())
+
+        file_token = self._canonical_attachment(record, submission_id, processed.canonical_artifact)
+        self.client.update_submission(record["record_id"], {"canonical_json": [{"file_token": file_token}]})
+        return {"canonical_json": file_token, "normalized": True}
+
+    def normalize_json_batch(self, *, slicer: str = "BambuStudio", limit: int | None = None) -> dict[str, Any]:
+        """Normalize matching Submissions without changing lifecycle fields."""
+        target_slicer = canonical_slicer_id(slicer)
+        records = self.client.list_records(self.client.submission_table_id, limit=limit)
+        matched = 0
+        normalized = 0
+        failures: list[dict[str, str]] = []
+        for record in records:
+            fields = record.get("fields", {})
+            if canonical_slicer_id(_lookup_text(fields.get("slicer"))) != target_slicer:
+                continue
+            matched += 1
+            submission_id = _lookup_text(fields.get("submission_id")) or str(record.get("record_id") or record.get("id") or "")
+            try:
+                self.enrich_submission(record=record, submission_id=submission_id, normalize_json_only=True)
+                normalized += 1
+            except Exception as exc:
+                failures.append({"submission_id": submission_id, "error": str(exc)})
+        return {"slicer": target_slicer, "matched": matched, "normalized": normalized, "failed": len(failures), "failures": failures}
 
     def backfill_base_version_no_text(self, *, limit: int | None = None) -> dict[str, int]:
         """Repair historical UPDATE submissions from their linked base version.

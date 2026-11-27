@@ -8,11 +8,17 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..slicers.contracts import Artifact
+from ..slicers.capabilities import (
+    DEFAULT_CONSISTENCY_CAPABILITIES,
+    SUPPORTED,
+    UNSUPPORTED,
+)
 from ..slicers.registry import canonical_slicer_id
 from ..three_mf.consistency import (
     validate_bambu_consistency,
     validate_creality_consistency,
     validate_elegoo_consistency,
+    validate_flash_studio_consistency,
     validate_orca_consistency,
     validate_prusa_slicer_consistency,
     validate_snapmaker_orca_consistency,
@@ -31,10 +37,12 @@ CONSISTENCY_VALIDATORS = {
     "BambuStudio": validate_bambu_consistency,
     "CrealityPrint": validate_creality_consistency,
     "ElegooSlicer": validate_elegoo_consistency,
+    "FlashStudio": validate_flash_studio_consistency,
     "OrcaSlicer": validate_orca_consistency,
     "SnapmakerOrcaSlicer": validate_snapmaker_orca_consistency,
     "PrusaSlicer": validate_prusa_slicer_consistency,
 }
+CONSISTENCY_CAPABILITIES = dict(DEFAULT_CONSISTENCY_CAPABILITIES)
 
 
 def _now() -> str:
@@ -80,9 +88,24 @@ def build_consistency_report(client: Any, record: dict[str, Any], candidate: Any
     """Return the complete report envelope as text, or empty text when unavailable."""
     fields = record.get("fields", {})
     slicer = canonical_slicer_id(_lookup_text(fields.get("slicer")))
+    capability = CONSISTENCY_CAPABILITIES.get(slicer)
     validator = validate_bambu_consistency if slicer == "BambuStudio" else CONSISTENCY_VALIDATORS.get(slicer)
-    if validator is None:
+    if capability is None:
         return ""
+    if capability == UNSUPPORTED:
+        return _serialize(_envelope(
+            "UNSUPPORTED",
+            error={
+                "code": "CONSISTENCY_UNSUPPORTED",
+                "slicer_id": slicer,
+                "message": "Consistency validation is not supported for this slicer",
+            },
+        ))
+    if capability == SUPPORTED and validator is None:
+        return _error_text_for_configuration(
+            "CONSISTENCY_VALIDATOR_NOT_REGISTERED",
+            slicer,
+        )
     attachments = _attachment_list(fields.get(PROJECT_FIELD))
     if not attachments:
         return ""
@@ -102,6 +125,17 @@ def build_consistency_report(client: Any, record: dict[str, Any], candidate: Any
     except Exception as exc:  # optional boundary: never fail native Preview
         logger.warning("consistency validation failed: %s", type(exc).__name__)
         return _error_text("CONSISTENCY_VALIDATION_FAILED")
+
+
+def _error_text_for_configuration(code: str, slicer_id: str) -> str:
+    return _serialize(_envelope(
+        "ERROR",
+        error={
+            "code": code,
+            "slicer_id": slicer_id,
+            "message": "Consistency registration is incomplete",
+        },
+    ))
 
 
 def update_submission_with_consistency_report(
