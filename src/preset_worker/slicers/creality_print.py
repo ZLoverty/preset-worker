@@ -93,8 +93,6 @@ class CrealityPrintProcessor(SlicerProcessor):
             settings_id = source.get("filament_settings_id")
             if not isinstance(settings_id, list) or not settings_id or not all(isinstance(item, str) and item for item in settings_id):
                 errors.append("Unsupported CrealityPrint preset type: missing filament_settings_id")
-            if not isinstance(source.get("inherits"), str) or not source["inherits"].strip():
-                errors.append("Unsupported CrealityPrint preset type: missing inherits")
             if source.get("from") not in (None, "User"):
                 errors.append("Unsupported CrealityPrint preset type: preset is not a user material preset")
         return ValidationResult(
